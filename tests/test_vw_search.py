@@ -39,14 +39,17 @@ def _load_search(vs_mock: MagicMock) -> Any:
 
 
 class TestFindColumnPositions:
-    def test_returns_positions_of_columns_and_koyazuka(self) -> None:
+    def test_returns_positions_and_kinds_of_columns_and_koyazuka(self) -> None:
         vs_mock = _make_vs_mock({
-            'a': ('4', 1000.0, 2000.0),   # 柱
-            'b': ('5', 3000.0, 4000.0),   # 小屋束
+            'a': ('4', 1000.0, 2000.0),   # 柱 → ×
+            'b': ('5', 3000.0, 4000.0),   # 小屋束 → ○
         })
         search = _load_search(vs_mock)
         positions = search.find_column_positions('1-柱', '')
-        assert positions == [(1000.0, 2000.0), (3000.0, 4000.0)]
+        assert positions == [
+            (1000.0, 2000.0, search.KIND_COLUMN),
+            (3000.0, 4000.0, search.KIND_KOYAZUKA),
+        ]
 
     def test_excludes_non_column_structural_use(self) -> None:
         vs_mock = _make_vs_mock({
@@ -56,7 +59,7 @@ class TestFindColumnPositions:
         })
         search = _load_search(vs_mock)
         positions = search.find_column_positions('1-柱', '')
-        assert positions == [(1000.0, 2000.0)]
+        assert positions == [(1000.0, 2000.0, search.KIND_COLUMN)]
 
     def test_empty_document_yields_no_positions(self) -> None:
         search = _load_search(_make_vs_mock({}))
@@ -88,3 +91,20 @@ class TestIsTargetColumn:
         vs_mock = _make_vs_mock({'a': ('1', 0.0, 0.0)})
         search = _load_search(vs_mock)
         assert search.is_target_column('a') is False
+
+
+class TestColumnKind:
+    def test_column_use_maps_to_column_kind(self) -> None:
+        vs_mock = _make_vs_mock({'a': ('4', 0.0, 0.0)})
+        search = _load_search(vs_mock)
+        assert search.column_kind('a') == search.KIND_COLUMN
+
+    def test_koyazuka_use_maps_to_koyazuka_kind(self) -> None:
+        vs_mock = _make_vs_mock({'a': ('5', 0.0, 0.0)})
+        search = _load_search(vs_mock)
+        assert search.column_kind('a') == search.KIND_KOYAZUKA
+
+    def test_other_use_maps_to_none(self) -> None:
+        vs_mock = _make_vs_mock({'a': ('1', 0.0, 0.0)})
+        search = _load_search(vs_mock)
+        assert search.column_kind('a') is None

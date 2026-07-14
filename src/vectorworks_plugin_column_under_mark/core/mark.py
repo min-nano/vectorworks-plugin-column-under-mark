@@ -7,10 +7,18 @@
 """
 from __future__ import annotations
 
+from typing import Callable
+
 from ..document import DOCUMENT_VERSION, Document, MarkCommand
 
 # 記号の既定サイズ (mm)。プラグインパラメータ MarkSize が未設定・0 の場合に使う。
 DEFAULT_MARK_SIZE = 300.0
+
+# 記号の種類。柱は × (KIND_COLUMN)、小屋束は ○ (KIND_KOYAZUKA) を描く。
+# 検索フェーズ (vw/search.py) が構造用途 (柱="4"・小屋束="5") をこの種類に
+# 変換し、組み立てフェーズが種類ごとに記号形状を選ぶ。
+KIND_COLUMN = 'column'
+KIND_KOYAZUKA = 'koyazuka'
 
 
 def build_cross_mark(x: float, y: float, size: float) -> MarkCommand:
@@ -25,35 +33,61 @@ def build_cross_mark(x: float, y: float, size: float) -> MarkCommand:
         'segments': [
             [[x - half, y - half], [x + half, y + half]],
             [[x - half, y + half], [x + half, y - half]],
-        ]
+        ],
+        'circles': [],
     }
 
 
+def build_circle_mark(x: float, y: float, size: float) -> MarkCommand:
+    """中心 (x, y)・直径 size の ○ 記号 (円 1 個) を作る。
+
+    半径は × 記号の外接正方形と外径をそろえるため ``size / 2`` とする。
+    """
+    return {
+        'segments': [],
+        'circles': [{'center': [x, y], 'radius': size / 2.0}],
+    }
+
+
+# 記号の種類 → 形状ビルダー。未知の種類は柱扱い (×) にフォールバックする。
+_MARK_BUILDERS: dict[str, Callable[[float, float, float], MarkCommand]] = {
+    KIND_COLUMN: build_cross_mark,
+    KIND_KOYAZUKA: build_circle_mark,
+}
+
+
+def build_mark(kind: str, x: float, y: float, size: float) -> MarkCommand:
+    """記号の種類に応じた形状 (柱→×・小屋束→○) を組み立てる。"""
+    builder = _MARK_BUILDERS.get(kind, build_cross_mark)
+    return builder(x, y, size)
+
+
 def build_marks(
-    positions: list[tuple[float, float]],
+    positions: list[tuple[float, float, str]],
     origin: tuple[float, float],
     size: float,
 ) -> list[MarkCommand]:
-    """柱のワールド座標のリストから記号命令のリストを組み立てる。
+    """柱・小屋束の位置と種類のリストから記号命令のリストを組み立てる。
 
-    ``origin`` はプラグインオブジェクトの挿入点 (ワールド座標)。各柱の位置を
-    ``origin`` 基準のローカル座標へ平行移動してから記号を作る。現状は回転
-    非対応 (オブジェクトを回転させない前提。CLAUDE.md 参照)。
+    各要素は ``(x, y, kind)`` で、``kind`` は記号の種類 (``KIND_COLUMN`` /
+    ``KIND_KOYAZUKA``)。``origin`` はプラグインオブジェクトの挿入点 (ワールド
+    座標) で、各位置を ``origin`` 基準のローカル座標へ平行移動してから記号を
+    作る。現状は回転非対応 (オブジェクトを回転させない前提。CLAUDE.md 参照)。
     """
     if size <= 0:
         size = DEFAULT_MARK_SIZE
     ox, oy = origin
     return [
-        build_cross_mark(x - ox, y - oy, size) for x, y in positions
+        build_mark(kind, x - ox, y - oy, size) for x, y, kind in positions
     ]
 
 
 def build_document(
-    positions: list[tuple[float, float]],
+    positions: list[tuple[float, float, str]],
     origin: tuple[float, float],
     size: float,
 ) -> Document:
-    """柱のワールド座標から命令セット (Document) を組み立てる。"""
+    """柱・小屋束の位置と種類から命令セット (Document) を組み立てる。"""
     return {
         'version': DOCUMENT_VERSION,
         'marks': build_marks(positions, origin, size),

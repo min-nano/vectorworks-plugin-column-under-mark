@@ -18,11 +18,10 @@ VectorWorks に取り込むプラグイン) が配置した柱を対象に想定
 現在実装済みの機能:
 
 - 指定レイヤ・クラスの柱・小屋束 (構造用途 4/5) の検索
-- 各柱位置への × 記号 (2 本の線分) の描画
+- 柱位置への × 記号 (2 本の線分)・小屋束位置への ○ 記号 (円) の描画
 
 今後の予定:
 
-- ○ など × 以外の記号の描画
 - プラグインオブジェクトを回転配置した場合の記号の向き補正
 
 ## 登録形態: ラッパースクリプト方式
@@ -71,8 +70,8 @@ src/
         __init__.py       # run() を公開 (パラメータ読取 → 検索 → 命令セット → 描画)
         document.py       # 命令セットのスキーマ定義・検証 (vs 非依存)
         core/             # フェーズ1: 記号ジオメトリ組み立て (vs 非依存)
-            __init__.py   # build_document / build_marks / build_cross_mark を公開
-            mark.py       # 柱のワールド座標 → mark 命令 (線分の集合)
+            __init__.py   # build_document / build_marks / build_mark / 記号種類定数を公開
+            mark.py       # 柱・小屋束の位置と種類 → mark 命令 (× は線分・○ は円)
         vw/               # フェーズ2: 検索・描画 (vs 依存)
             __init__.py   # execute_document(document) / find_column_positions を公開
             search.py     # 指定レイヤ・クラスの柱 (構造用途 4/5) を検索 → 位置
@@ -93,22 +92,29 @@ pyproject.toml           # パッケージメタデータ
 
 ```
 {
-    "version": 1,
+    "version": 2,
     "marks": [
-        {"segments": [[[x1, y1], [x2, y2]], ...]},  # 記号1個 = 線分の集合
+        # 記号1個 = 線分の集合 (segments) + 円の集合 (circles)
+        {
+            "segments": [[[x1, y1], [x2, y2]], ...],
+            "circles": [{"center": [cx, cy], "radius": r}, ...]
+        },
         ...
     ]
 }
 ```
 
 - `marks`: 柱・小屋束 1 本につき 1 つの記号 (`MarkCommand`)。
-- 各記号は線分 (`segments`) の集合。× 記号は交差する 2 本の線分。
+- 各記号は線分 (`segments`) と円 (`circles`) の集合。柱の × 記号は交差する
+  2 本の線分 (円なし)、小屋束の ○ 記号は 1 個の円 (線分なし)。`segments` /
+  `circles` はどちらも省略可能 (検証時に既定 `[]`)。
 - 座標は**プラグインオブジェクトのローカル座標** (挿入点を原点とする座標系)。
   組み立てフェーズ (`core/mark.py`) が柱のワールド座標から挿入点を差し引いて
   格納するため、描画フェーズはそのまま描くだけ。
 
 スキーマを変更するときは `DOCUMENT_VERSION`・`TypedDict` 定義 (`MarkCommand` /
-`Document`)・`validate_document()`・docstring・テストを併せて更新すること。
+`CircleCommand` / `Document`)・`validate_document()`・docstring・テストを
+併せて更新すること。
 
 ## 座標系: ローカル座標への変換
 
@@ -130,8 +136,13 @@ pyproject.toml           # パッケージメタデータ
   レイヤ・クラスが空文字ならその条件を付けない (全対象)。構造用途は条件式では
   絞れないためコールバック側で判定する。
 - `vs.ForEachObject(callback, criteria)` で構造材を走査し、コールバックで構造
-  用途 (`GetRField(h, 'StructuralMember', 'StructuralUse')`) が柱="4"・小屋束
-  ="5" のものだけを採る (`is_target_column`)。
+  用途 (`GetRField(h, 'StructuralMember', 'StructuralUse')`) を記号の種類に変換
+  する (`column_kind`): 柱="4" → `KIND_COLUMN`、小屋束="5" → `KIND_KOYAZUKA`、
+  どちらでもなければ `None` (対象外)。`find_column_positions` は対象だけを
+  `(x, y, kind)` の形で返し、`core` が種類ごとに記号形状 (柱→×・小屋束→○) を
+  選ぶ。記号種類の定数 (`KIND_COLUMN` / `KIND_KOYAZUKA`) は vs 非依存の `core`
+  側で定義し、`search` が import する (種類→形状の対応付けは presentation で
+  あり `core` が持つ)。
 - 位置は構造材 (プラグインオブジェクト) の挿入点 `vs.GetSymLoc(h)` を用いる。
 - 構造用途の値 (柱="4"・小屋束="5") は姉妹プロジェクトの `vw/column.py` が
   `StructuralUse` フィールドに設定する値と一致させている。VectorWorks の構造材
