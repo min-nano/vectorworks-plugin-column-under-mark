@@ -57,8 +57,11 @@ def run() -> None:
 
     from .vw import execute_document, find_column_positions
 
-    # プラグインオブジェクト本体・パラメータレコードのハンドルを取得する
-    ok, object_handle, record_handle, _wall = vs.GetCustomObjectInfo()
+    # プラグインオブジェクト本体・パラメータレコードのハンドルを取得する。
+    # vs.GetCustomObjectInfo() は VectorScript の VAR 引数を含めて 5 値
+    # (結果, オブジェクト名, オブジェクトハンドル, レコードハンドル,
+    # 壁ハンドル) を返す。
+    ok, _name, object_handle, record_handle, _wall = vs.GetCustomObjectInfo()
     if not ok:
         return
 

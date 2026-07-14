@@ -22,7 +22,7 @@ def _make_vs_mock(columns: dict[str, tuple[str, float, float]]) -> MagicMock:
     columns: handle -> (structural_use, x, y)。
     """
     vs_mock = MagicMock()
-    vs_mock.GetCustomObjectInfo.return_value = (True, 'PIO', 'REC', None)
+    vs_mock.GetCustomObjectInfo.return_value = (True, 'ColumnUnderMark', 'PIO', 'REC', None)
     vs_mock.GetName.return_value = PLUGIN_NAME
 
     def get_rfield(handle: Any, record: str, field: str) -> str:
@@ -140,7 +140,7 @@ class TestRun:
 
     def test_aborts_when_not_a_plugin_object(self) -> None:
         vs_mock = _make_vs_mock({'a': ('4', 1100.0, 2100.0)})
-        vs_mock.GetCustomObjectInfo.return_value = (False, None, None, None)
+        vs_mock.GetCustomObjectInfo.return_value = (False, '', None, None, None)
         with patch.dict('sys.modules', {'vs': vs_mock}):
             _reload_vw_modules()
             import vectorworks_plugin_column_under_mark as pkg
