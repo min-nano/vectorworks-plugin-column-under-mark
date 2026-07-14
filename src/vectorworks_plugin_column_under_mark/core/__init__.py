@@ -7,14 +7,22 @@ from __future__ import annotations
 
 from .mark import (
     DEFAULT_MARK_SIZE,
+    KIND_COLUMN,
+    KIND_KOYAZUKA,
+    build_circle_mark,
     build_cross_mark,
     build_document,
+    build_mark,
     build_marks,
 )
 
 __all__ = [
     'DEFAULT_MARK_SIZE',
+    'KIND_COLUMN',
+    'KIND_KOYAZUKA',
+    'build_circle_mark',
     'build_cross_mark',
     'build_document',
+    'build_mark',
     'build_marks',
 ]

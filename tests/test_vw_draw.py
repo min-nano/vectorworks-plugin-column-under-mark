@@ -12,7 +12,11 @@ def _cross(x: float, y: float, half: float) -> MarkCommand:
     return {'segments': [
         [[x - half, y - half], [x + half, y + half]],
         [[x - half, y + half], [x + half, y - half]],
-    ]}
+    ], 'circles': []}
+
+
+def _circle(x: float, y: float, radius: float) -> MarkCommand:
+    return {'segments': [], 'circles': [{'center': [x, y], 'radius': radius}]}
 
 
 def _load_draw(vs_mock: MagicMock) -> Any:
@@ -45,3 +49,13 @@ class TestExecuteMarks:
         # × は 2 線分 = MoveTo/LineTo が 2 回ずつ
         assert move_calls == [(-100.0, -100.0), (-100.0, 100.0)]
         assert line_calls == [(100.0, 100.0), (100.0, -100.0)]
+
+    def test_draws_circle_as_full_arc_by_center(self) -> None:
+        vs_mock = MagicMock()
+        draw = _load_draw(vs_mock)
+        draw.execute_marks([_circle(1000.0, 500.0, 150.0)])
+
+        # ○ は円 1 個 = ArcByCenter を全周 (0→360 度) で 1 回。線分は描かない
+        vs_mock.MoveTo.assert_not_called()
+        vs_mock.LineTo.assert_not_called()
+        vs_mock.ArcByCenter.assert_called_once_with(1000.0, 500.0, 150.0, 0.0, 360.0)

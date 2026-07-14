@@ -11,12 +11,23 @@ import vs
 from ..document import MarkCommand
 
 
+# 円 (○ 記号) を全周描くための開始角・掃引角 (度)
+_CIRCLE_START_ANGLE = 0.0
+_CIRCLE_SWEEP_ANGLE = 360.0
+
+
 def draw_mark(command: MarkCommand) -> None:
-    """記号命令 1 件を線分の集合として描画する。"""
+    """記号命令 1 件を線分・円の集合として描画する。"""
     for segment in command['segments']:
         (x1, y1), (x2, y2) = segment
         vs.MoveTo(x1, y1)
         vs.LineTo(x2, y2)
+    for circle in command['circles']:
+        cx, cy = circle['center']
+        vs.ArcByCenter(
+            cx, cy, circle['radius'],
+            _CIRCLE_START_ANGLE, _CIRCLE_SWEEP_ANGLE,
+        )
 
 
 def execute_marks(commands: list[MarkCommand]) -> int:
