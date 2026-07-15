@@ -75,6 +75,34 @@ class TestRun:
         # 小屋束 → ○ 1 個 → ArcByCenter が 1 回
         assert vs_mock.ArcByCenter.call_count == 1
 
+    def test_section_style_draws_single_diagonal_for_koyazuka(self) -> None:
+        # MarkStyle='断面' のとき小屋束は / (対角線 1 本) で描く
+        vs_mock = _make_vs_mock({
+            'a': ('4', 1100.0, 2100.0),   # 柱 → × (2 線分)
+            'b': ('5', 3100.0, 4100.0),   # 小屋束 → / (1 線分)
+        })
+
+        def get_rfield(handle: Any, record: str, field: str) -> str:
+            if record == 'StructuralMember' and field == 'StructuralUse':
+                return {'a': '4', 'b': '5'}[handle]
+            if field == 'MarkSize':
+                return '200'
+            if field == 'MarkStyle':
+                return '断面'
+            return ''
+
+        vs_mock.GetRField.side_effect = get_rfield
+        with patch.dict('sys.modules', {'vs': vs_mock}):
+            _reload_vw_modules()
+            import vectorworks_plugin_column_under_mark as pkg
+            importlib.reload(pkg)
+            pkg.run()
+
+        # 柱の × (2 線分) + 小屋束の / (1 線分) = 3 線分。円は描かない。
+        assert vs_mock.MoveTo.call_count == 3
+        assert vs_mock.LineTo.call_count == 3
+        vs_mock.ArcByCenter.assert_not_called()
+
     def test_marks_use_local_coordinates(self) -> None:
         # 柱 (1100, 2100)・挿入点 (100, 100)・サイズ 200 → ローカル中心 (1000, 2000)
         vs_mock = _make_vs_mock({'a': ('4', 1100.0, 2100.0)})

@@ -4,13 +4,18 @@ from __future__ import annotations
 from vectorworks_plugin_column_under_mark.core import mark
 from vectorworks_plugin_column_under_mark.core.mark import (
     DEFAULT_MARK_SIZE,
+    DEFAULT_MARK_STYLE,
     KIND_COLUMN,
     KIND_KOYAZUKA,
+    STYLE_PLAN,
+    STYLE_SECTION,
     build_circle_mark,
     build_cross_mark,
+    build_diagonal_mark,
     build_document,
     build_mark,
     build_marks,
+    normalize_style,
 )
 from vectorworks_plugin_column_under_mark.document import DOCUMENT_VERSION
 
@@ -42,6 +47,42 @@ class TestBuildCircleMark:
         assert command['circles'] == [{'center': [1000.0, 500.0], 'radius': 100.0}]
 
 
+class TestBuildDiagonalMark:
+    def test_single_diagonal_segment(self) -> None:
+        command = build_diagonal_mark(0.0, 0.0, 200.0)
+        assert command['segments'] == [
+            [[-100.0, -100.0], [100.0, 100.0]],
+        ]
+
+    def test_has_no_circles(self) -> None:
+        assert build_diagonal_mark(0.0, 0.0, 200.0)['circles'] == []
+
+    def test_centered_on_given_point(self) -> None:
+        command = build_diagonal_mark(1000.0, 500.0, 200.0)
+        xs = [p[0] for seg in command['segments'] for p in seg]
+        ys = [p[1] for seg in command['segments'] for p in seg]
+        assert sum(xs) / len(xs) == 1000.0
+        assert sum(ys) / len(ys) == 500.0
+
+
+class TestNormalizeStyle:
+    def test_empty_defaults_to_plan(self) -> None:
+        assert normalize_style('') == STYLE_PLAN
+        assert DEFAULT_MARK_STYLE == STYLE_PLAN
+
+    def test_unknown_defaults_to_plan(self) -> None:
+        assert normalize_style('foo') == STYLE_PLAN
+
+    def test_japanese_section_token(self) -> None:
+        assert normalize_style('断面記号') == STYLE_SECTION
+
+    def test_english_section_token_case_insensitive(self) -> None:
+        assert normalize_style('Section') == STYLE_SECTION
+
+    def test_surrounding_whitespace_ignored(self) -> None:
+        assert normalize_style('  断面  ') == STYLE_SECTION
+
+
 class TestBuildMark:
     def test_column_kind_builds_cross(self) -> None:
         command = build_mark(KIND_COLUMN, 0.0, 0.0, 200.0)
@@ -57,6 +98,21 @@ class TestBuildMark:
         command = build_mark('mystery', 0.0, 0.0, 200.0)
         assert len(command['segments']) == 2
         assert command['circles'] == []
+
+    def test_section_style_column_stays_cross(self) -> None:
+        command = build_mark(KIND_COLUMN, 0.0, 0.0, 200.0, STYLE_SECTION)
+        assert len(command['segments']) == 2
+        assert command['circles'] == []
+
+    def test_section_style_koyazuka_builds_single_diagonal(self) -> None:
+        command = build_mark(KIND_KOYAZUKA, 0.0, 0.0, 200.0, STYLE_SECTION)
+        assert command['segments'] == [[[-100.0, -100.0], [100.0, 100.0]]]
+        assert command['circles'] == []
+
+    def test_unknown_style_falls_back_to_plan(self) -> None:
+        command = build_mark(KIND_KOYAZUKA, 0.0, 0.0, 200.0, 'mystery')
+        assert command['segments'] == []
+        assert len(command['circles']) == 1
 
 
 class TestBuildMarks:
@@ -95,6 +151,20 @@ class TestBuildMarks:
         marks = build_marks([(0.0, 0.0, KIND_COLUMN)], (0.0, 0.0), 0.0)
         half = DEFAULT_MARK_SIZE / 2.0
         assert marks[0]['segments'][0] == [[-half, -half], [half, half]]
+
+    def test_default_style_koyazuka_is_circle(self) -> None:
+        marks = build_marks([(0.0, 0.0, KIND_KOYAZUKA)], (0.0, 0.0), 200.0)
+        assert len(marks[0]['circles']) == 1
+        assert marks[0]['segments'] == []
+
+    def test_section_style_koyazuka_is_single_diagonal(self) -> None:
+        marks = build_marks(
+            [(1200.0, 800.0, KIND_KOYAZUKA)], (1000.0, 500.0), 200.0,
+            STYLE_SECTION,
+        )
+        # ローカル中心 = (200, 300)
+        assert marks[0]['segments'] == [[[100.0, 200.0], [300.0, 400.0]]]
+        assert marks[0]['circles'] == []
 
 
 class TestBuildDocument:

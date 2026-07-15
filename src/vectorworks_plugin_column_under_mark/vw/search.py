@@ -20,7 +20,8 @@ STRUCTURAL_USE_COLUMN = '4'    # 柱 (管柱・通し柱)
 STRUCTURAL_USE_KOYAZUKA = '5'  # 小屋束
 COLUMN_USES = (STRUCTURAL_USE_COLUMN, STRUCTURAL_USE_KOYAZUKA)
 
-# 構造用途 → 記号の種類。柱は × (KIND_COLUMN)、小屋束は ○ (KIND_KOYAZUKA)。
+# 構造用途 → 記号の種類。柱=KIND_COLUMN、小屋束=KIND_KOYAZUKA。種類ごとの
+# 記号形状 (柱→×・小屋束→○ または /) は記号スタイルに応じて core が選ぶ。
 USE_TO_KIND = {
     STRUCTURAL_USE_COLUMN: KIND_COLUMN,
     STRUCTURAL_USE_KOYAZUKA: KIND_KOYAZUKA,

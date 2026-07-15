@@ -18,7 +18,10 @@ VectorWorks に取り込むプラグイン) が配置した柱を対象に想定
 現在実装済みの機能:
 
 - 指定レイヤ・クラスの柱・小屋束 (構造用途 4/5) の検索
-- 柱位置への × 記号 (2 本の線分)・小屋束位置への ○ 記号 (円) の描画
+- 柱位置への × 記号 (2 本の線分) の描画
+- 記号スタイル (`MarkStyle` パラメータ) の選択。平面記号 (既定) では小屋束を
+  ○ 記号 (円)、断面記号では小屋束を / 記号 (対角線 1 本) で描く。柱はどちらの
+  スタイルでも × のまま。
 
 今後の予定:
 
@@ -70,8 +73,8 @@ src/
         __init__.py       # run() を公開 (パラメータ読取 → 検索 → 命令セット → 描画)
         document.py       # 命令セットのスキーマ定義・検証 (vs 非依存)
         core/             # フェーズ1: 記号ジオメトリ組み立て (vs 非依存)
-            __init__.py   # build_document / build_marks / build_mark / 記号種類定数を公開
-            mark.py       # 柱・小屋束の位置と種類 → mark 命令 (× は線分・○ は円)
+            __init__.py   # build_document / build_marks / build_mark / 記号種類・スタイル定数を公開
+            mark.py       # 柱・小屋束の位置と種類・スタイル → mark 命令 (× と ○ は線分/円、断面は / の線分)
         vw/               # フェーズ2: 検索・描画 (vs 依存)
             __init__.py   # execute_document(document) / find_column_positions を公開
             search.py     # 指定レイヤ・クラスの柱 (構造用途 4/5) を検索 → 位置
@@ -139,8 +142,9 @@ pyproject.toml           # パッケージメタデータ
   用途 (`GetRField(h, 'StructuralMember', 'StructuralUse')`) を記号の種類に変換
   する (`column_kind`): 柱="4" → `KIND_COLUMN`、小屋束="5" → `KIND_KOYAZUKA`、
   どちらでもなければ `None` (対象外)。`find_column_positions` は対象だけを
-  `(x, y, kind)` の形で返し、`core` が種類ごとに記号形状 (柱→×・小屋束→○) を
-  選ぶ。記号種類の定数 (`KIND_COLUMN` / `KIND_KOYAZUKA`) は vs 非依存の `core`
+  `(x, y, kind)` の形で返し、`core` が種類と記号スタイルごとに記号形状 (柱→×・
+  小屋束→平面記号なら ○/断面記号なら /) を選ぶ。記号種類の定数
+  (`KIND_COLUMN` / `KIND_KOYAZUKA`) は vs 非依存の `core`
   側で定義し、`search` が import する (種類→形状の対応付けは presentation で
   あり `core` が持つ)。
 - 位置は構造材 (プラグインオブジェクト) の挿入点 `vs.GetSymLoc(h)` を用いる。
@@ -154,10 +158,14 @@ pyproject.toml           # パッケージメタデータ
 レコードのハンドルを取得し、`vs.GetName(record_handle)` でレコード名 (=プラグ
 イン名) を得て、`vs.GetRField` で各パラメータを読む。パラメータのフィールド名は
 `__init__.py` の定数 (`PARAM_TARGET_LAYER`='TargetLayer' /
-`PARAM_TARGET_CLASS`='TargetClass' / `PARAM_MARK_SIZE`='MarkSize') に集約して
-いる。VectorWorks 側のプラグイン定義でこれらのパラメータを用意する必要がある
-(README 参照)。`MarkSize` が数値に解釈できない場合は既定サイズ
-(`core/mark.py` の `DEFAULT_MARK_SIZE`=300mm) にフォールバックする。
+`PARAM_TARGET_CLASS`='TargetClass' / `PARAM_MARK_SIZE`='MarkSize' /
+`PARAM_MARK_STYLE`='MarkStyle') に集約している。VectorWorks 側のプラグイン
+定義でこれらのパラメータを用意する必要がある (README 参照)。`MarkSize` が
+数値に解釈できない場合は既定サイズ (`core/mark.py` の `DEFAULT_MARK_SIZE`
+=300mm) にフォールバックする。`MarkStyle` は `core.normalize_style` で正規化
+し、'断面'・'section' を含めば断面記号 (`STYLE_SECTION`)、それ以外・空欄なら
+平面記号 (`STYLE_PLAN`、既定) を使う。記号スタイル → 種類 → 形状の対応付けは
+presentation として `core/mark.py` の `_STYLE_MARK_BUILDERS` が持つ。
 
 ## コーディング規約: 型注釈
 

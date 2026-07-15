@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from .core import DEFAULT_MARK_SIZE, build_document
+from .core import DEFAULT_MARK_SIZE, build_document, normalize_style
 from .document import validate_document
 
 __all__ = ['build_document', 'run', 'validate_document']
@@ -30,6 +30,7 @@ __all__ = ['build_document', 'run', 'validate_document']
 PARAM_TARGET_LAYER = 'TargetLayer'  # 検索対象レイヤ (テキスト)
 PARAM_TARGET_CLASS = 'TargetClass'  # 検索対象クラス (テキスト)
 PARAM_MARK_SIZE = 'MarkSize'        # 記号サイズ (寸法/実数)
+PARAM_MARK_STYLE = 'MarkStyle'      # 記号スタイル (平面/断面。テキスト/ポップアップ)
 
 
 def _parameter(vs: Any, handle: object, record_name: str, field: str) -> str:
@@ -47,8 +48,8 @@ def _parameter(vs: Any, handle: object, record_name: str, field: str) -> str:
 def run() -> None:
     """プラグインオブジェクトのリセット (再描画) 処理。
 
-    パラメータ (対象レイヤ・クラス・記号サイズ) を読み取り、該当する柱・
-    小屋束を検索して各位置に記号を描く。
+    パラメータ (対象レイヤ・クラス・記号サイズ・記号スタイル) を読み取り、
+    該当する柱・小屋束を検索して各位置に記号を描く。
     """
     # vs に依存するモジュールは VectorWorks 上での実行時のみ読み込む。
     # これにより core パッケージ (組み立てフェーズ) は通常の Python 環境でも
@@ -74,6 +75,10 @@ def run() -> None:
         size = float(size_text)
     except (TypeError, ValueError):
         size = DEFAULT_MARK_SIZE
+    # 記号スタイル (平面記号=柱×・小屋束○ / 断面記号=柱×・小屋束/)
+    style = normalize_style(
+        _parameter(vs, object_handle, record_name, PARAM_MARK_STYLE)
+    )
 
     # プラグインオブジェクトの挿入点 (記号はこの点を原点とするローカル座標で描く)
     origin = vs.GetSymLoc(object_handle)
@@ -82,7 +87,7 @@ def run() -> None:
     positions = find_column_positions(layer, class_name)
 
     # フェーズ1(組み立ては vs 非依存): 柱位置 → 記号命令セット
-    document = build_document(positions, origin, size)
+    document = build_document(positions, origin, size, style)
     # JSON を経由して命令セットが直列化可能 (= vs ハンドル等を含まない) こと
     # を保証する (親プロジェクトと同じ規約)
     document = json.loads(json.dumps(document))
