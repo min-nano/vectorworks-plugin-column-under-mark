@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import vs
 
-from ..core import KIND_COLUMN, KIND_KOYAZUKA
+from ..core import KIND_COLUMN, KIND_KOYAZUKA, Bounds, ColumnPosition
 
 # 構造材ツールのプラグインオブジェクト名・レコード名
 RECORD_NAME = 'StructuralMember'
@@ -59,23 +59,37 @@ def is_target_column(handle: object) -> bool:
     return column_kind(handle) is not None
 
 
+def section_bounds(handle: object) -> Bounds:
+    """構造材の実断面 (平面への投影の外接矩形) をワールド座標で返す。
+
+    ``vs.GetBBox`` は対象の**画面平面への投影**の外接矩形を返す。垂直な柱・
+    小屋束では平面への投影がその断面 (伏図での見え掛かり) になるため、これを
+    実断面として断面記号の寸法・位置に用いる。戻り値は対角する 2 隅
+    ``(x1, y1, x2, y2)``。
+    """
+    (x1, y1), (x2, y2) = vs.GetBBox(handle)
+    return (x1, y1, x2, y2)
+
+
 def find_column_positions(
     layer: str, class_name: str
-) -> list[tuple[float, float, str]]:
-    """指定レイヤ・クラスの柱・小屋束の平面位置と記号の種類を返す。
+) -> list[ColumnPosition]:
+    """指定レイヤ・クラスの柱・小屋束の位置情報を返す。
 
     条件式で構造材を絞り込み、構造用途が柱/小屋束のものだけを採る。各要素は
-    ``(x, y, kind)`` で、``kind`` は記号の種類 (柱→``KIND_COLUMN`` /
-    小屋束→``KIND_KOYAZUKA``)。位置は構造材 (プラグインオブジェクト) の挿入点
-    (``GetSymLoc``) を用いる。
+    ``ColumnPosition`` で、挿入点 (``GetSymLoc``)・記号の種類 (柱→``KIND_COLUMN``
+    / 小屋束→``KIND_KOYAZUKA``)・実断面の外接矩形 (``GetBBox``) を持つ。実断面は
+    断面記号で寸法・位置を実断面に合わせるために使う。
     """
-    positions: list[tuple[float, float, str]] = []
+    positions: list[ColumnPosition] = []
 
     def collect(handle: object) -> None:
         kind = column_kind(handle)
         if kind is not None:
             x, y = vs.GetSymLoc(handle)
-            positions.append((x, y, kind))
+            positions.append(
+                ColumnPosition(x, y, kind, section_bounds(handle))
+            )
 
     vs.ForEachObject(collect, build_criteria(layer, class_name))
     return positions

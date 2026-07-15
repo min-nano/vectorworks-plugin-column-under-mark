@@ -25,9 +25,16 @@ def _make_vs_mock(objects: dict[str, tuple[str, float, float]]) -> MagicMock:
     def get_sym_loc(handle: str) -> tuple[float, float]:
         return (objects[handle][1], objects[handle][2])
 
+    def get_bbox(handle: str) -> tuple[tuple[float, float], tuple[float, float]]:
+        # 挿入点まわりの 100×100 の実断面を模す。VW 慣習に合わせ
+        # p1=左上 (minx, maxy)・p2=右下 (maxx, miny) を返す。
+        x, y = objects[handle][1], objects[handle][2]
+        return ((x - 50.0, y + 50.0), (x + 50.0, y - 50.0))
+
     vs_mock.ForEachObject.side_effect = for_each_object
     vs_mock.GetRField.side_effect = get_rfield
     vs_mock.GetSymLoc.side_effect = get_sym_loc
+    vs_mock.GetBBox.side_effect = get_bbox
     return vs_mock
 
 
@@ -39,16 +46,24 @@ def _load_search(vs_mock: MagicMock) -> Any:
 
 
 class TestFindColumnPositions:
-    def test_returns_positions_and_kinds_of_columns_and_koyazuka(self) -> None:
+    def test_returns_positions_kinds_and_bounds(self) -> None:
         vs_mock = _make_vs_mock({
             'a': ('4', 1000.0, 2000.0),   # 柱 → ×
             'b': ('5', 3000.0, 4000.0),   # 小屋束 → ○
         })
         search = _load_search(vs_mock)
         positions = search.find_column_positions('1-柱', '')
+        # 各要素は ColumnPosition(x, y, kind, bounds)。bounds は GetBBox の
+        # 2 隅を (x1, y1, x2, y2) に平坦化したもの。
         assert positions == [
-            (1000.0, 2000.0, search.KIND_COLUMN),
-            (3000.0, 4000.0, search.KIND_KOYAZUKA),
+            search.ColumnPosition(
+                1000.0, 2000.0, search.KIND_COLUMN,
+                (950.0, 2050.0, 1050.0, 1950.0),
+            ),
+            search.ColumnPosition(
+                3000.0, 4000.0, search.KIND_KOYAZUKA,
+                (2950.0, 4050.0, 3050.0, 3950.0),
+            ),
         ]
 
     def test_excludes_non_column_structural_use(self) -> None:
@@ -59,7 +74,12 @@ class TestFindColumnPositions:
         })
         search = _load_search(vs_mock)
         positions = search.find_column_positions('1-柱', '')
-        assert positions == [(1000.0, 2000.0, search.KIND_COLUMN)]
+        assert positions == [
+            search.ColumnPosition(
+                1000.0, 2000.0, search.KIND_COLUMN,
+                (950.0, 2050.0, 1050.0, 1950.0),
+            ),
+        ]
 
     def test_empty_document_yields_no_positions(self) -> None:
         search = _load_search(_make_vs_mock({}))
