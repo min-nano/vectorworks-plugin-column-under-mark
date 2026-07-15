@@ -37,12 +37,18 @@ def _make_vs_mock(columns: dict[str, tuple[str, float, float]]) -> MagicMock:
             return ORIGIN
         return (columns[handle][1], columns[handle][2])
 
+    def get_bbox(handle: Any) -> tuple[tuple[float, float], tuple[float, float]]:
+        # 構造材の実断面 (100×100) を模す。p1=左上・p2=右下。
+        x, y = columns[handle][1], columns[handle][2]
+        return ((x - 50.0, y + 50.0), (x + 50.0, y - 50.0))
+
     def for_each_object(callback: Any, criteria: str) -> None:
         for handle in columns:
             callback(handle)
 
     vs_mock.GetRField.side_effect = get_rfield
     vs_mock.GetSymLoc.side_effect = get_sym_loc
+    vs_mock.GetBBox.side_effect = get_bbox
     vs_mock.ForEachObject.side_effect = for_each_object
     return vs_mock
 
@@ -74,6 +80,46 @@ class TestRun:
         assert vs_mock.LineTo.call_count == 2
         # 小屋束 → ○ 1 個 → ArcByCenter が 1 回
         assert vs_mock.ArcByCenter.call_count == 1
+
+    def test_section_style_draws_marks_matching_actual_cross_section(self) -> None:
+        # MarkStyle='断面' のとき柱=×・小屋束=/ を実断面 (GetBBox) に合わせて描く
+        vs_mock = _make_vs_mock({
+            'a': ('4', 1100.0, 2100.0),   # 柱 → × (2 線分)
+            'b': ('5', 3100.0, 4100.0),   # 小屋束 → / (1 線分)
+        })
+
+        def get_rfield(handle: Any, record: str, field: str) -> str:
+            if record == 'StructuralMember' and field == 'StructuralUse':
+                return {'a': '4', 'b': '5'}[handle]
+            if field == 'MarkSize':
+                return '200'
+            if field == 'MarkStyle':
+                return '断面'
+            return ''
+
+        vs_mock.GetRField.side_effect = get_rfield
+        with patch.dict('sys.modules', {'vs': vs_mock}):
+            _reload_vw_modules()
+            import vectorworks_plugin_column_under_mark as pkg
+            importlib.reload(pkg)
+            pkg.run()
+
+        # 柱の × (2 線分) + 小屋束の / (1 線分) = 3 線分。円は描かない。
+        assert vs_mock.MoveTo.call_count == 3
+        assert vs_mock.LineTo.call_count == 3
+        vs_mock.ArcByCenter.assert_not_called()
+
+        move_calls = [c.args for c in vs_mock.MoveTo.call_args_list]
+        line_calls = [c.args for c in vs_mock.LineTo.call_args_list]
+        # 柱 a: 実断面 world (1050,2150)-(1150,2050)・挿入点 (100,100)
+        # → ローカル外接矩形 (950,2050)-(1050,1950) を結ぶ × の 2 本。
+        # 指定サイズ 200 ではなく実断面 (100幅) に一致する。
+        assert move_calls[:2] == [(950.0, 2050.0), (950.0, 1950.0)]
+        assert line_calls[:2] == [(1050.0, 1950.0), (1050.0, 2050.0)]
+        # 小屋束 b: 実断面 world (3050,4150)-(3150,4050)・挿入点 (100,100)
+        # → ローカル外接矩形の / (左下→右上) 1 本。
+        assert move_calls[2] == (2950.0, 3950.0)
+        assert line_calls[2] == (3050.0, 4050.0)
 
     def test_marks_use_local_coordinates(self) -> None:
         # 柱 (1100, 2100)・挿入点 (100, 100)・サイズ 200 → ローカル中心 (1000, 2000)

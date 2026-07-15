@@ -18,7 +18,13 @@ VectorWorks に取り込むプラグイン) が配置した柱を対象に想定
 現在実装済みの機能:
 
 - 指定レイヤ・クラスの柱・小屋束 (構造用途 4/5) の検索
-- 柱位置への × 記号 (2 本の線分)・小屋束位置への ○ 記号 (円) の描画
+- 柱位置への × 記号 (2 本の線分) の描画
+- 記号スタイル (`MarkStyle` パラメータ) の選択。平面記号 (既定) では小屋束を
+  ○ 記号 (円)、断面記号では小屋束を / 記号 (対角線 1 本) で描く。柱はどちらの
+  スタイルでも × のまま。
+- 記号寸法の決め方はスタイル依存。平面記号 (伏図記号) は挿入点中心・指定サイズ
+  (`MarkSize`)、断面記号は柱・小屋束の**実断面** (`vs.GetBBox` の外接矩形) に
+  合わせて対角線を引く。
 
 今後の予定:
 
@@ -70,8 +76,8 @@ src/
         __init__.py       # run() を公開 (パラメータ読取 → 検索 → 命令セット → 描画)
         document.py       # 命令セットのスキーマ定義・検証 (vs 非依存)
         core/             # フェーズ1: 記号ジオメトリ組み立て (vs 非依存)
-            __init__.py   # build_document / build_marks / build_mark / 記号種類定数を公開
-            mark.py       # 柱・小屋束の位置と種類 → mark 命令 (× は線分・○ は円)
+            __init__.py   # build_document / build_marks / build_mark / ColumnPosition / 記号種類・スタイル定数を公開
+            mark.py       # 柱・小屋束の位置情報 (ColumnPosition) と種類・スタイル → mark 命令 (平面は指定サイズ、断面は実断面 bounds に合わせる)
         vw/               # フェーズ2: 検索・描画 (vs 依存)
             __init__.py   # execute_document(document) / find_column_positions を公開
             search.py     # 指定レイヤ・クラスの柱 (構造用途 4/5) を検索 → 位置
@@ -121,8 +127,9 @@ pyproject.toml           # パッケージメタデータ
 **プラグインオブジェクトのジオメトリは、オブジェクトの挿入点を原点とする
 ローカル座標で描かれる。** 一方、柱はモデル空間のワールド座標で見つかる。この
 ため `core/mark.py` の `build_marks` は柱のワールド座標から挿入点 (`origin`) を
-差し引いてローカル座標に直してから記号を作る。挿入点は `run()` が
-`vs.GetSymLoc(object_handle)` で取得する。
+差し引いてローカル座標に直してから記号を作る。挿入点 (`ColumnPosition.x/y`) も
+実断面 (`ColumnPosition.bounds`) も同じ `origin` を差し引いてローカル化する。
+挿入点は `run()` が `vs.GetSymLoc(object_handle)` で取得する。
 
 現状は**オブジェクトを回転させない前提** (平行移動のみ)。回転して配置した場合は
 記号の位置がずれる。回転対応 (`vs.GetSymRot` で角度を得て逆回転) は今後の課題。
@@ -139,11 +146,18 @@ pyproject.toml           # パッケージメタデータ
   用途 (`GetRField(h, 'StructuralMember', 'StructuralUse')`) を記号の種類に変換
   する (`column_kind`): 柱="4" → `KIND_COLUMN`、小屋束="5" → `KIND_KOYAZUKA`、
   どちらでもなければ `None` (対象外)。`find_column_positions` は対象だけを
-  `(x, y, kind)` の形で返し、`core` が種類ごとに記号形状 (柱→×・小屋束→○) を
-  選ぶ。記号種類の定数 (`KIND_COLUMN` / `KIND_KOYAZUKA`) は vs 非依存の `core`
-  側で定義し、`search` が import する (種類→形状の対応付けは presentation で
-  あり `core` が持つ)。
+  `ColumnPosition(x, y, kind, bounds)` の形で返し、`core` が種類と記号スタイル
+  ごとに記号形状 (柱→×・小屋束→平面記号なら ○/断面記号なら /) を選ぶ。
+  `ColumnPosition` と記号種類の定数 (`KIND_COLUMN` / `KIND_KOYAZUKA`) は vs
+  非依存の `core` 側で定義し、`search` が import する (種類→形状の対応付けは
+  presentation であり `core` が持つ)。
 - 位置は構造材 (プラグインオブジェクト) の挿入点 `vs.GetSymLoc(h)` を用いる。
+- 実断面 (`bounds`) は `section_bounds` が `vs.GetBBox(h)` で得る。`GetBBox` は
+  対象の画面平面への投影の外接矩形を返す。垂直な柱・小屋束では投影が断面 (伏図
+  での見え掛かり) になるため、これを実断面として断面記号の寸法・位置に用いる。
+  断面記号は挿入点中心の指定サイズではなく、この外接矩形の対角線で ×・/ を引く
+  (`build_cross_in_bounds` / `build_diagonal_in_bounds`)。`GetBBox` が実断面と
+  一致するか (回転した断面など) は VW 上で最終確認する方針。
 - 構造用途の値 (柱="4"・小屋束="5") は姉妹プロジェクトの `vw/column.py` が
   `StructuralUse` フィールドに設定する値と一致させている。VectorWorks の構造材
   ツール・条件式の実挙動は VW 上で最終確認する方針。
@@ -154,10 +168,17 @@ pyproject.toml           # パッケージメタデータ
 レコードのハンドルを取得し、`vs.GetName(record_handle)` でレコード名 (=プラグ
 イン名) を得て、`vs.GetRField` で各パラメータを読む。パラメータのフィールド名は
 `__init__.py` の定数 (`PARAM_TARGET_LAYER`='TargetLayer' /
-`PARAM_TARGET_CLASS`='TargetClass' / `PARAM_MARK_SIZE`='MarkSize') に集約して
-いる。VectorWorks 側のプラグイン定義でこれらのパラメータを用意する必要がある
-(README 参照)。`MarkSize` が数値に解釈できない場合は既定サイズ
-(`core/mark.py` の `DEFAULT_MARK_SIZE`=300mm) にフォールバックする。
+`PARAM_TARGET_CLASS`='TargetClass' / `PARAM_MARK_SIZE`='MarkSize' /
+`PARAM_MARK_STYLE`='MarkStyle') に集約している。VectorWorks 側のプラグイン
+定義でこれらのパラメータを用意する必要がある (README 参照)。`MarkSize` が
+数値に解釈できない場合は既定サイズ (`core/mark.py` の `DEFAULT_MARK_SIZE`
+=300mm) にフォールバックする。`MarkSize` は平面記号で使う (断面記号は実断面に
+合わせるため無視。実断面が取れない場合のみ `MarkSize` にフォールバック)。
+`MarkStyle` は `core.normalize_style` で正規化し、'断面'・'section' を含めば
+断面記号 (`STYLE_SECTION`)、それ以外・空欄なら平面記号 (`STYLE_PLAN`、既定) を
+使う。スタイル → 種類 → 形状ビルダーの対応付けは presentation として
+`core/mark.py` が持つ (平面=`_PLAN_BUILDERS`、断面=`_SECTION_BOUNDS_BUILDERS`、
+断面のフォールバック=`_SECTION_SIZE_BUILDERS`)。
 
 ## コーディング規約: 型注釈
 
