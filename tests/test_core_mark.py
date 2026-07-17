@@ -19,6 +19,7 @@ from vectorworks_plugin_column_under_mark.core.mark import (
     build_document,
     build_mark,
     build_marks,
+    build_symbol_mark,
     normalize_style,
     normalize_top_range,
 )
@@ -50,6 +51,19 @@ class TestBuildCircleMark:
         command = build_circle_mark(1000.0, 500.0, 200.0)
         assert command['segments'] == []
         assert command['circles'] == [{'center': [1000.0, 500.0], 'radius': 100.0}]
+
+
+class TestBuildSymbolMark:
+    def test_single_symbol_at_point(self) -> None:
+        command = build_symbol_mark('柱記号', 1000.0, 500.0)
+        assert command['symbols'] == [
+            {'name': '柱記号', 'point': [1000.0, 500.0]}
+        ]
+
+    def test_has_no_segments_or_circles(self) -> None:
+        command = build_symbol_mark('A', 0.0, 0.0)
+        assert command['segments'] == []
+        assert command['circles'] == []
 
 
 class TestBuildDiagonalMark:
@@ -239,6 +253,47 @@ class TestBuildMark:
         assert command['segments'] == []
         assert len(command['circles']) == 1
 
+    def test_plan_symbol_replaces_cross(self) -> None:
+        # 平面記号でシンボル指定があると柱の × の代わりにシンボルを配置する
+        command = build_mark(
+            KIND_COLUMN, 100.0, 200.0, 200.0, STYLE_PLAN, None, '柱記号',
+        )
+        assert command['segments'] == []
+        assert command['circles'] == []
+        assert command['symbols'] == [
+            {'name': '柱記号', 'point': [100.0, 200.0]}
+        ]
+
+    def test_plan_symbol_replaces_circle_for_koyazuka(self) -> None:
+        # 柱・小屋束で共通のシンボルを使う (小屋束の ○ も置き換わる)
+        command = build_mark(
+            KIND_KOYAZUKA, 100.0, 200.0, 200.0, STYLE_PLAN, None, '柱記号',
+        )
+        assert command['circles'] == []
+        assert command['symbols'] == [
+            {'name': '柱記号', 'point': [100.0, 200.0]}
+        ]
+
+    def test_section_ignores_symbol(self) -> None:
+        # 断面記号ではシンボル指定を無視し、実断面に合わせた × を描く
+        command = build_mark(
+            KIND_COLUMN, 0.0, 0.0, 200.0, STYLE_SECTION,
+            (100.0, 200.0, 400.0, 600.0), '柱記号',
+        )
+        assert command['symbols'] == []
+        assert command['segments'] == [
+            [[100.0, 200.0], [400.0, 600.0]],
+            [[100.0, 600.0], [400.0, 200.0]],
+        ]
+
+    def test_empty_symbol_keeps_cross(self) -> None:
+        # 空のシンボル名は従来どおり × を描く
+        command = build_mark(
+            KIND_COLUMN, 0.0, 0.0, 200.0, STYLE_PLAN, None, '',
+        )
+        assert command['symbols'] == []
+        assert len(command['segments']) == 2
+
 
 class TestBuildMarks:
     def test_one_mark_per_position(self) -> None:
@@ -320,6 +375,18 @@ class TestBuildMarks:
         )
         # ローカル中心 = (200, 300)、指定サイズ 200 の /
         assert marks[0]['segments'] == [[[100.0, 200.0], [300.0, 400.0]]]
+
+    def test_symbol_placed_at_local_coordinates(self) -> None:
+        # 平面記号でシンボル指定があると各柱位置 (ローカル座標) に配置する
+        marks = build_marks(
+            [ColumnPosition(1200.0, 800.0, KIND_COLUMN)], (1000.0, 500.0),
+            200.0, STYLE_PLAN, TopRange(), '柱記号',
+        )
+        # ローカル中心 = (200, 300)
+        assert marks[0]['symbols'] == [
+            {'name': '柱記号', 'point': [200.0, 300.0]}
+        ]
+        assert marks[0]['segments'] == []
 
 
 class TestBuildMarksTopRange:

@@ -22,6 +22,9 @@ VectorWorks に取り込むプラグイン) が配置した柱を対象に想定
 - 記号スタイル (`MarkStyle` パラメータ) の選択。平面記号 (既定) では小屋束を
   ○ 記号 (円)、断面記号では小屋束を / 記号 (対角線 1 本) で描く。柱はどちらの
   スタイルでも × のまま。
+- 平面記号でのシンボル指定 (`MarkSymbol` パラメータ)。指定すると × / ○ の代わりに
+  任意の VectorWorks シンボルを各柱位置に配置する (柱・小屋束で共通)。空欄なら
+  従来どおり × / ○ を描く。断面記号では無視する。
 - 記号寸法の決め方はスタイル依存。平面記号 (伏図記号) は挿入点中心・指定サイズ
   (`MarkSize`)、断面記号は柱・小屋束の**実断面** (`vs.GetBBox` の外接矩形) に
   合わせて対角線を引く。
@@ -86,7 +89,7 @@ src/
         vw/               # フェーズ2: 検索・描画 (vs 依存)
             __init__.py   # execute_document(document) / find_column_positions を公開
             search.py     # 指定レイヤ・クラスの柱 (構造用途 4/5) を検索 → 位置・実断面・上端高さ (top_height)
-            draw.py       # mark 命令 → 線分 (MoveTo/LineTo) を描画
+            draw.py       # mark 命令 → 線分 (MoveTo/LineTo)・円 (ArcByCenter)・シンボル (Symbol) を描画
 main.py                  # VectorWorks に登録するラッパースクリプト (実行時に自動更新)
 tests/                   # pytest 用テスト (CI は vs.py スタブを GitHub からダウンロード)
 pyproject.toml           # パッケージメタデータ
@@ -103,12 +106,14 @@ pyproject.toml           # パッケージメタデータ
 
 ```
 {
-    "version": 2,
+    "version": 3,
     "marks": [
         # 記号1個 = 線分の集合 (segments) + 円の集合 (circles)
+        #           + シンボル配置の集合 (symbols)
         {
             "segments": [[[x1, y1], [x2, y2]], ...],
-            "circles": [{"center": [cx, cy], "radius": r}, ...]
+            "circles": [{"center": [cx, cy], "radius": r}, ...],
+            "symbols": [{"name": "記号A", "point": [x, y]}, ...]
         },
         ...
     ]
@@ -116,16 +121,20 @@ pyproject.toml           # パッケージメタデータ
 ```
 
 - `marks`: 柱・小屋束 1 本につき 1 つの記号 (`MarkCommand`)。
-- 各記号は線分 (`segments`) と円 (`circles`) の集合。柱の × 記号は交差する
-  2 本の線分 (円なし)、小屋束の ○ 記号は 1 個の円 (線分なし)。`segments` /
-  `circles` はどちらも省略可能 (検証時に既定 `[]`)。
+- 各記号は線分 (`segments`)・円 (`circles`)・シンボル配置 (`symbols`) の集合。
+  柱の × 記号は交差する 2 本の線分 (円なし)、小屋束の ○ 記号は 1 個の円
+  (線分なし)、シンボル指定時はシンボル配置 1 個 (線分・円なし)。`segments` /
+  `circles` / `symbols` はいずれも省略可能 (検証時に既定 `[]`)。
+- シンボル配置 (`SymbolCommand`) はシンボル名 (`name`, 空でない文字列) と配置点
+  (`point`, ローカル座標) で表す。回転は現状非対応のため持たず、描画フェーズが
+  0 度で配置する (`vs.Symbol(name, (x, y), 0)`)。
 - 座標は**プラグインオブジェクトのローカル座標** (挿入点を原点とする座標系)。
   組み立てフェーズ (`core/mark.py`) が柱のワールド座標から挿入点を差し引いて
   格納するため、描画フェーズはそのまま描くだけ。
 
 スキーマを変更するときは `DOCUMENT_VERSION`・`TypedDict` 定義 (`MarkCommand` /
-`CircleCommand` / `Document`)・`validate_document()`・docstring・テストを
-併せて更新すること。
+`CircleCommand` / `SymbolCommand` / `Document`)・`validate_document()`・
+docstring・テストを併せて更新すること。
 
 ## 座標系: ローカル座標への変換
 
@@ -183,9 +192,10 @@ pyproject.toml           # パッケージメタデータ
 イン名) を得て、`vs.GetRField` で各パラメータを読む。パラメータのフィールド名は
 `__init__.py` の定数 (`PARAM_TARGET_LAYER`='TargetLayer' /
 `PARAM_TARGET_CLASS`='TargetClass' / `PARAM_MARK_SIZE`='MarkSize' /
-`PARAM_MARK_STYLE`='MarkStyle' / `PARAM_TOP_MIN`='TopHeightMin' /
-`PARAM_TOP_MAX`='TopHeightMax') に集約している。VectorWorks 側のプラグイン
-定義でこれらのパラメータを用意する必要がある (README 参照)。`MarkSize` が
+`PARAM_MARK_STYLE`='MarkStyle' / `PARAM_MARK_SYMBOL`='MarkSymbol' /
+`PARAM_TOP_MIN`='TopHeightMin' / `PARAM_TOP_MAX`='TopHeightMax') に集約して
+いる。VectorWorks 側のプラグイン定義でこれらのパラメータを用意する必要がある
+(README 参照)。`MarkSize` が
 数値に解釈できない場合は既定サイズ (`core/mark.py` の `DEFAULT_MARK_SIZE`
 =300mm) にフォールバックする。`MarkSize` は平面記号で使う (断面記号は実断面に
 合わせるため無視。実断面が取れない場合のみ `MarkSize` にフォールバック)。
@@ -193,7 +203,10 @@ pyproject.toml           # パッケージメタデータ
 断面記号 (`STYLE_SECTION`)、それ以外・空欄なら平面記号 (`STYLE_PLAN`、既定) を
 使う。スタイル → 種類 → 形状ビルダーの対応付けは presentation として
 `core/mark.py` が持つ (平面=`_PLAN_BUILDERS`、断面=`_SECTION_BOUNDS_BUILDERS`、
-断面のフォールバック=`_SECTION_SIZE_BUILDERS`)。`TopHeightMin` / `TopHeightMax`
+断面のフォールバック=`_SECTION_SIZE_BUILDERS`)。`MarkSymbol` は前後空白を
+除いた文字列で、空でなければ平面記号で × / ○ の代わりにそのシンボルを各柱位置に
+配置する (`build_mark` が `build_symbol_mark` を選ぶ。柱・小屋束で共通)。断面
+記号では無視する。`TopHeightMin` / `TopHeightMax`
 は `core.normalize_top_range` で `TopRange` に正規化する。空欄・数値化できない
 値はその側を無制限 (`None`) とし、両方指定で下限 > 上限なら入れ替える。この
 `TopRange` を `build_document` に渡すと、上端高さが範囲外の柱・小屋束は記号を

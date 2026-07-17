@@ -64,7 +64,63 @@ class TestValidateDocument:
         result = validate_document(
             {'version': DOCUMENT_VERSION, 'marks': [{}]}
         )
-        assert result['marks'][0] == {'segments': [], 'circles': []}
+        assert result['marks'][0] == {
+            'segments': [], 'circles': [], 'symbols': [],
+        }
+
+    def test_symbol_mark_passes(self) -> None:
+        document = {
+            'version': DOCUMENT_VERSION,
+            'marks': [{'symbols': [{'name': '柱記号', 'point': [100.0, 200.0]}]}],
+        }
+        result = validate_document(document)
+        assert result['marks'][0]['symbols'] == [
+            {'name': '柱記号', 'point': [100.0, 200.0]}
+        ]
+        assert result['marks'][0]['segments'] == []
+        assert result['marks'][0]['circles'] == []
+
+    def test_symbol_point_coerced_to_float(self) -> None:
+        document = {
+            'version': DOCUMENT_VERSION,
+            'marks': [{'symbols': [{'name': 'A', 'point': [0, 10]}]}],
+        }
+        result = validate_document(document)
+        point = result['marks'][0]['symbols'][0]['point']
+        assert point == [0.0, 10.0]
+        assert all(isinstance(v, float) for v in point)
+
+    def test_symbol_empty_name_rejected(self) -> None:
+        document = {
+            'version': DOCUMENT_VERSION,
+            'marks': [{'symbols': [{'name': '', 'point': [0.0, 0.0]}]}],
+        }
+        with pytest.raises(ValueError):
+            validate_document(document)
+
+    def test_symbol_non_string_name_rejected(self) -> None:
+        document = {
+            'version': DOCUMENT_VERSION,
+            'marks': [{'symbols': [{'name': 123, 'point': [0.0, 0.0]}]}],
+        }
+        with pytest.raises(ValueError):
+            validate_document(document)
+
+    def test_symbol_missing_point_rejected(self) -> None:
+        document = {
+            'version': DOCUMENT_VERSION,
+            'marks': [{'symbols': [{'name': 'A'}]}],
+        }
+        with pytest.raises(ValueError):
+            validate_document(document)
+
+    def test_symbol_non_numeric_point_rejected(self) -> None:
+        document = {
+            'version': DOCUMENT_VERSION,
+            'marks': [{'symbols': [{'name': 'A', 'point': ['x', 0.0]}]}],
+        }
+        with pytest.raises(ValueError):
+            validate_document(document)
 
     def test_coordinates_are_coerced_to_float(self) -> None:
         document = {
