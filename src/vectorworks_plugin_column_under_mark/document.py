@@ -8,7 +8,7 @@
 命令セットの構造::
 
     {
-        "version": 2,
+        "version": 3,
         "marks": [
             {
                 "segments": [
@@ -19,6 +19,10 @@
                 "circles": [
                     {"center": [cx, cy], "radius": r},   # 円1個
                     ...
+                ],
+                "symbols": [
+                    {"name": "記号A", "point": [x, y]},   # シンボル配置1個
+                    ...
                 ]
             },
             ...
@@ -26,11 +30,13 @@
     }
 
 - ``marks``: 描画する記号のリスト。柱・小屋束 1 本につき 1 つの記号。
-- 各記号 (``MarkCommand``) は線分 (``segments``) と円 (``circles``) の集合で
-  表す。柱の × 記号は交差する 2 本の線分 (円なし)、小屋束の ○ 記号は 1 個の
-  円 (線分なし) になる。座標はプラグインオブジェクトのローカル座標 (挿入点を
-  原点とする座標系)。解析フェーズが柱のワールド座標をローカル座標へ変換して
-  格納するため、描画フェーズは値をそのまま描くだけ。
+- 各記号 (``MarkCommand``) は線分 (``segments``)・円 (``circles``)・シンボル
+  配置 (``symbols``) の集合で表す。柱の × 記号は交差する 2 本の線分 (円なし)、
+  小屋束の ○ 記号は 1 個の円 (線分なし) になる。平面記号でシンボルを指定した
+  場合は、× / ○ の代わりに指定シンボルの配置 1 個 (線分・円なし) になる。
+  座標はプラグインオブジェクトのローカル座標 (挿入点を原点とする座標系)。
+  解析フェーズが柱のワールド座標をローカル座標へ変換して格納するため、描画
+  フェーズは値をそのまま描くだけ。
 
 スキーマを変更するときは ``DOCUMENT_VERSION``・``TypedDict`` 定義・
 ``validate_document()`` とテストを併せて更新すること。
@@ -40,7 +46,7 @@ from __future__ import annotations
 from typing import Any, TypedDict
 
 # 命令セットのスキーマバージョン。互換性のない変更時にインクリメントする。
-DOCUMENT_VERSION = 2
+DOCUMENT_VERSION = 3
 
 
 class CircleCommand(TypedDict):
@@ -50,11 +56,24 @@ class CircleCommand(TypedDict):
     radius: float
 
 
+class SymbolCommand(TypedDict):
+    """シンボル配置 1 個の命令。シンボル名と配置点 (ローカル座標) で表す。"""
+
+    name: str
+    point: list[float]
+
+
 class MarkCommand(TypedDict):
-    """記号 1 個 (柱・小屋束 1 本ぶん) の命令。線分・円の集合で図形を表す。"""
+    """記号 1 個 (柱・小屋束 1 本ぶん) の命令。
+
+    線分 (``segments``)・円 (``circles``)・シンボル配置 (``symbols``) の集合で
+    図形を表す。柱の × は 2 線分、小屋束の ○ は 1 円、平面記号でシンボルを指定
+    した場合はシンボル配置 1 個になる。
+    """
 
     segments: list[list[list[float]]]
     circles: list[CircleCommand]
+    symbols: list[SymbolCommand]
 
 
 class Document(TypedDict):
@@ -104,8 +123,29 @@ def _validate_circle(value: Any) -> CircleCommand:
     }
 
 
+def _validate_symbol(value: Any) -> SymbolCommand:
+    """シンボル配置 1 個を検証する。
+
+    ``{"name": str, "point": [x, y]}`` 形式でなければ例外。``name`` は空でない
+    文字列、``point`` は数値 2 個で表す。
+    """
+    if not isinstance(value, dict):
+        raise ValueError(f'シンボルは dict で指定してください: {value!r}')
+    name = value.get('name')
+    if not isinstance(name, str) or not name:
+        raise ValueError(f'シンボル名は空でない文字列で指定してください: {name!r}')
+    point = value.get('point')
+    if not isinstance(point, (list, tuple)) or len(point) != 2:
+        raise ValueError(f'シンボルの配置点は [x, y] で表してください: {point!r}')
+    px, py = point
+    return {
+        'name': name,
+        'point': [_validate_number(px, '座標'), _validate_number(py, '座標')],
+    }
+
+
 def _validate_mark(value: Any) -> MarkCommand:
-    """記号命令 1 件を検証する。segments・circles はどちらも省略可 (既定 [])。"""
+    """記号命令 1 件を検証する。segments・circles・symbols はいずれも省略可 (既定 [])。"""
     if not isinstance(value, dict):
         raise ValueError(f'記号命令は dict で指定してください: {value!r}')
     segments = value.get('segments', [])
@@ -114,9 +154,13 @@ def _validate_mark(value: Any) -> MarkCommand:
     circles = value.get('circles', [])
     if not isinstance(circles, (list, tuple)):
         raise ValueError(f'circles はリストで指定してください: {value!r}')
+    symbols = value.get('symbols', [])
+    if not isinstance(symbols, (list, tuple)):
+        raise ValueError(f'symbols はリストで指定してください: {value!r}')
     return {
         'segments': [_validate_segment(segment) for segment in segments],
         'circles': [_validate_circle(circle) for circle in circles],
+        'symbols': [_validate_symbol(symbol) for symbol in symbols],
     }
 
 

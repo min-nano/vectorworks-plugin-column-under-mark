@@ -23,6 +23,7 @@ from .mark import (
     build_document,
     build_mark,
     build_marks,
+    build_symbol_mark,
     normalize_style,
     normalize_top_range,
 )
@@ -45,6 +46,7 @@ __all__ = [
     'build_document',
     'build_mark',
     'build_marks',
+    'build_symbol_mark',
     'normalize_style',
     'normalize_top_range',
 ]

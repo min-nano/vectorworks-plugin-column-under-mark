@@ -15,9 +15,12 @@ from ..document import MarkCommand
 _CIRCLE_START_ANGLE = 0.0
 _CIRCLE_SWEEP_ANGLE = 360.0
 
+# シンボル配置の回転角 (度)。現状は回転非対応のため常に 0 度で配置する。
+_SYMBOL_ROTATION = 0.0
+
 
 def draw_mark(command: MarkCommand) -> None:
-    """記号命令 1 件を線分・円の集合として描画する。"""
+    """記号命令 1 件を線分・円・シンボルの集合として描画する。"""
     for segment in command['segments']:
         (x1, y1), (x2, y2) = segment
         vs.MoveTo(x1, y1)
@@ -28,6 +31,10 @@ def draw_mark(command: MarkCommand) -> None:
             cx, cy, circle['radius'],
             _CIRCLE_START_ANGLE, _CIRCLE_SWEEP_ANGLE,
         )
+    for symbol in command['symbols']:
+        px, py = symbol['point']
+        # vs.Symbol(symbolName, p, rotationAngle): p は POINT (タプル)。
+        vs.Symbol(symbol['name'], (px, py), _SYMBOL_ROTATION)
 
 
 def execute_marks(commands: list[MarkCommand]) -> int:

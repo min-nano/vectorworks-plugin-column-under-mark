@@ -12,11 +12,23 @@ def _cross(x: float, y: float, half: float) -> MarkCommand:
     return {'segments': [
         [[x - half, y - half], [x + half, y + half]],
         [[x - half, y + half], [x + half, y - half]],
-    ], 'circles': []}
+    ], 'circles': [], 'symbols': []}
 
 
 def _circle(x: float, y: float, radius: float) -> MarkCommand:
-    return {'segments': [], 'circles': [{'center': [x, y], 'radius': radius}]}
+    return {
+        'segments': [],
+        'circles': [{'center': [x, y], 'radius': radius}],
+        'symbols': [],
+    }
+
+
+def _symbol(name: str, x: float, y: float) -> MarkCommand:
+    return {
+        'segments': [],
+        'circles': [],
+        'symbols': [{'name': name, 'point': [x, y]}],
+    }
 
 
 def _load_draw(vs_mock: MagicMock) -> Any:
@@ -59,3 +71,13 @@ class TestExecuteMarks:
         vs_mock.MoveTo.assert_not_called()
         vs_mock.LineTo.assert_not_called()
         vs_mock.ArcByCenter.assert_called_once_with(1000.0, 500.0, 150.0, 0.0, 360.0)
+
+    def test_draws_symbol_at_point(self) -> None:
+        vs_mock = MagicMock()
+        draw = _load_draw(vs_mock)
+        draw.execute_marks([_symbol('柱記号', 1000.0, 500.0)])
+
+        # シンボルは vs.Symbol(name, (x, y), 回転角) を 1 回。線分・円は描かない
+        vs_mock.MoveTo.assert_not_called()
+        vs_mock.ArcByCenter.assert_not_called()
+        vs_mock.Symbol.assert_called_once_with('柱記号', (1000.0, 500.0), 0.0)

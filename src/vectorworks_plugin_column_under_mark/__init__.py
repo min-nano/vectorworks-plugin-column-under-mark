@@ -36,6 +36,7 @@ PARAM_TARGET_LAYER = 'TargetLayer'   # 検索対象レイヤ (テキスト)
 PARAM_TARGET_CLASS = 'TargetClass'   # 検索対象クラス (テキスト)
 PARAM_MARK_SIZE = 'MarkSize'         # 記号サイズ (寸法/実数)
 PARAM_MARK_STYLE = 'MarkStyle'       # 記号スタイル (平面/断面。テキスト/ポップアップ)
+PARAM_MARK_SYMBOL = 'MarkSymbol'     # 平面記号で使うシンボル名 (テキスト)。空欄で ×/○
 PARAM_TOP_MIN = 'TopHeightMin'       # 上端高さの下限 (寸法/実数)。空欄で無制限
 PARAM_TOP_MAX = 'TopHeightMax'       # 上端高さの上限 (寸法/実数)。空欄で無制限
 
@@ -55,9 +56,11 @@ def _parameter(vs: Any, handle: object, record_name: str, field: str) -> str:
 def run() -> None:
     """プラグインオブジェクトのリセット (再描画) 処理。
 
-    パラメータ (対象レイヤ・クラス・記号サイズ・記号スタイル・上端高さの範囲)
-    を読み取り、該当する柱・小屋束を検索して各位置に記号を描く。上端高さの範囲
-    を指定した場合は、上端がその範囲に入る柱・小屋束にのみ記号を描く。
+    パラメータ (対象レイヤ・クラス・記号サイズ・記号スタイル・シンボル名・
+    上端高さの範囲) を読み取り、該当する柱・小屋束を検索して各位置に記号を描く。
+    平面記号でシンボル名を指定した場合は × / ○ の代わりにそのシンボルを配置する。
+    上端高さの範囲を指定した場合は、上端がその範囲に入る柱・小屋束にのみ記号を
+    描く。
     """
     # vs に依存するモジュールは VectorWorks 上での実行時のみ読み込む。
     # これにより core パッケージ (組み立てフェーズ) は通常の Python 環境でも
@@ -87,6 +90,12 @@ def run() -> None:
     style = normalize_style(
         _parameter(vs, object_handle, record_name, PARAM_MARK_STYLE)
     )
+    # 平面記号で使うシンボル名。指定があれば × / ○ の代わりにそのシンボルを
+    # 各柱位置に配置する (柱・小屋束で共通。断面記号では無視)。空欄なら従来の
+    # × / ○ を描く。
+    symbol = _parameter(
+        vs, object_handle, record_name, PARAM_MARK_SYMBOL
+    ).strip()
     # 上端高さの表示範囲 (下限・上限)。上端が範囲内の柱・小屋束にのみ記号を描く。
     # 空欄の側は無制限、両方空欄なら絞り込まない (すべて表示)。
     top_range = normalize_top_range(
@@ -101,7 +110,9 @@ def run() -> None:
     positions = find_column_positions(layer, class_name)
 
     # フェーズ1(組み立ては vs 非依存): 柱位置 → 記号命令セット
-    document = build_document(positions, origin, size, style, top_range)
+    document = build_document(
+        positions, origin, size, style, top_range, symbol
+    )
     # JSON を経由して命令セットが直列化可能 (= vs ハンドル等を含まない) こと
     # を保証する (親プロジェクトと同じ規約)
     document = json.loads(json.dumps(document))

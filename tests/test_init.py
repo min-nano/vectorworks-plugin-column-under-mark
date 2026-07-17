@@ -134,6 +134,41 @@ class TestRun:
         assert move_calls[2] == (2950.0, 3950.0)
         assert line_calls[2] == (3050.0, 4050.0)
 
+    def test_symbol_places_symbol_instead_of_cross_and_circle(self) -> None:
+        # MarkSymbol を指定すると平面記号で柱・小屋束ともにシンボルを配置する
+        vs_mock = _make_vs_mock({
+            'a': ('4', 1100.0, 2100.0),   # 柱
+            'b': ('5', 3100.0, 4100.0),   # 小屋束
+        })
+
+        def get_rfield(handle: Any, record: str, field: str) -> str:
+            if record == 'StructuralMember' and field == 'StructuralUse':
+                return {'a': '4', 'b': '5'}[handle]
+            if field == 'MarkSize':
+                return '200'
+            if field == 'MarkSymbol':
+                return '柱記号'
+            return ''
+
+        vs_mock.GetRField.side_effect = get_rfield
+        with patch.dict('sys.modules', {'vs': vs_mock}):
+            _reload_vw_modules()
+            import vectorworks_plugin_column_under_mark as pkg
+            importlib.reload(pkg)
+            pkg.run()
+
+        # × / ○ は描かず、各柱位置にシンボルを 2 個配置する
+        vs_mock.MoveTo.assert_not_called()
+        vs_mock.ArcByCenter.assert_not_called()
+        assert vs_mock.Symbol.call_count == 2
+        symbol_calls = [c.args for c in vs_mock.Symbol.call_args_list]
+        # 柱 a: (1100,2100) 挿入点 (100,100) → ローカル (1000,2000)
+        # 小屋束 b: (3100,4100) → ローカル (3000,4000)
+        assert symbol_calls == [
+            ('柱記号', (1000.0, 2000.0), 0.0),
+            ('柱記号', (3000.0, 4000.0), 0.0),
+        ]
+
     def test_top_height_range_filters_out_of_range_columns(self) -> None:
         # TopHeightMin/Max を指定すると上端が範囲内の柱だけに記号を描く
         vs_mock = _make_vs_mock({

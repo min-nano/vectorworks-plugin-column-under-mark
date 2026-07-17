@@ -8,9 +8,11 @@
 記号スタイルによって寸法の決め方が異なる:
 
 - 平面記号 (伏図記号) は挿入点を中心に**指定サイズ** (``MarkSize``) で描く。
+  シンボル名 (``MarkSymbol``) を指定した場合は、× / ○ の代わりにそのシンボルを
+  各柱位置に配置する (柱・小屋束で共通)。
 - 断面記号は柱・小屋束の**実断面** (外接矩形 ``bounds``) に合わせて描く。実断面
   は検索フェーズが ``vs.GetBBox`` で得る。実断面が得られない場合は指定サイズに
-  フォールバックする。
+  フォールバックする。シンボル指定は断面記号では無視する。
 """
 from __future__ import annotations
 
@@ -101,6 +103,7 @@ def build_cross_mark(x: float, y: float, size: float) -> MarkCommand:
             [[x - half, y + half], [x + half, y - half]],
         ],
         'circles': [],
+        'symbols': [],
     }
 
 
@@ -112,6 +115,7 @@ def build_circle_mark(x: float, y: float, size: float) -> MarkCommand:
     return {
         'segments': [],
         'circles': [{'center': [x, y], 'radius': size / 2.0}],
+        'symbols': [],
     }
 
 
@@ -127,6 +131,21 @@ def build_diagonal_mark(x: float, y: float, size: float) -> MarkCommand:
             [[x - half, y - half], [x + half, y + half]],
         ],
         'circles': [],
+        'symbols': [],
+    }
+
+
+def build_symbol_mark(name: str, x: float, y: float) -> MarkCommand:
+    """点 (x, y) にシンボル ``name`` を配置する記号命令を作る。
+
+    平面記号でシンボルを指定した場合に、× / ○ の代わりに用いる。線分・円は
+    持たず、シンボル配置 1 個だけを持つ。回転は現状非対応のため付けない
+    (描画フェーズが 0 度で配置する)。
+    """
+    return {
+        'segments': [],
+        'circles': [],
+        'symbols': [{'name': name, 'point': [x, y]}],
     }
 
 
@@ -143,6 +162,7 @@ def build_cross_in_bounds(
             [[x1, y2], [x2, y1]],
         ],
         'circles': [],
+        'symbols': [],
     }
 
 
@@ -158,6 +178,7 @@ def build_diagonal_in_bounds(
     return {
         'segments': [[[lo_x, lo_y], [hi_x, hi_y]]],
         'circles': [],
+        'symbols': [],
     }
 
 
@@ -234,16 +255,24 @@ def build_mark(
     kind: str, x: float, y: float, size: float,
     style: str = DEFAULT_MARK_STYLE,
     bounds: Optional[Bounds] = None,
+    symbol: str = '',
 ) -> MarkCommand:
     """記号の種類とスタイルに応じた形状を組み立てる。座標はローカル座標。
 
     - 平面記号 (``STYLE_PLAN``): 中心 (x, y)・指定サイズ。柱→×・小屋束→○。
+      ``symbol`` (シンボル名) が空でなければ、× / ○ の代わりにそのシンボルを
+      中心 (x, y) に配置する (柱・小屋束で共通)。
     - 断面記号 (``STYLE_SECTION``): 実断面 ``bounds`` (ローカル座標の外接矩形)
       に合わせる。柱→×・小屋束→/。``bounds`` が ``None`` か面積ゼロのときは
-      中心 (x, y)・指定サイズにフォールバックする。
+      中心 (x, y)・指定サイズにフォールバックする。``symbol`` は断面記号では
+      無視する。
 
     未知のスタイルは平面記号、未知の種類は柱 (×) にフォールバックする。
     """
+    # 平面記号 (既定・未知スタイル含む) でシンボル指定があれば、× / ○ の
+    # 代わりにシンボルを配置する。断面記号では実断面優先のため無視する。
+    if style != STYLE_SECTION and symbol:
+        return build_symbol_mark(symbol, x, y)
     if style == STYLE_SECTION:
         if bounds is not None and _bounds_has_area(bounds):
             bounds_builder = _SECTION_BOUNDS_BUILDERS.get(
@@ -262,15 +291,18 @@ def build_marks(
     size: float,
     style: str = DEFAULT_MARK_STYLE,
     top_range: TopRange = TopRange(),
+    symbol: str = '',
 ) -> list[MarkCommand]:
     """柱・小屋束の位置情報のリストから記号命令のリストを組み立てる。
 
     各要素は ``ColumnPosition`` (挿入点・種類・実断面・上端高さ)。``style`` は
     記号スタイル (``STYLE_PLAN`` / ``STYLE_SECTION``)。``top_range`` は上端高さの
     表示範囲で、上端が範囲外の柱・小屋束は記号を作らない (既定は無制限で全表示)。
-    ``origin`` はプラグインオブジェクトの挿入点 (ワールド座標) で、挿入点・実断面
-    ともに ``origin`` 基準のローカル座標へ平行移動してから記号を作る。現状は
-    回転非対応 (オブジェクトを回転させない前提。CLAUDE.md 参照)。
+    ``symbol`` (シンボル名) を指定すると、平面記号では × / ○ の代わりにその
+    シンボルを各柱位置に配置する (断面記号では無視)。``origin`` はプラグイン
+    オブジェクトの挿入点 (ワールド座標) で、挿入点・実断面ともに ``origin`` 基準の
+    ローカル座標へ平行移動してから記号を作る。現状は回転非対応 (オブジェクトを
+    回転させない前提。CLAUDE.md 参照)。
     """
     if size <= 0:
         size = DEFAULT_MARK_SIZE
@@ -286,7 +318,8 @@ def build_marks(
             local_bounds = (bx1 - ox, by1 - oy, bx2 - ox, by2 - oy)
         marks.append(
             build_mark(
-                pos.kind, pos.x - ox, pos.y - oy, size, style, local_bounds
+                pos.kind, pos.x - ox, pos.y - oy, size, style, local_bounds,
+                symbol,
             )
         )
     return marks
@@ -298,12 +331,14 @@ def build_document(
     size: float,
     style: str = DEFAULT_MARK_STYLE,
     top_range: TopRange = TopRange(),
+    symbol: str = '',
 ) -> Document:
     """柱・小屋束の位置情報から命令セット (Document) を組み立てる。
 
     ``top_range`` で上端高さの表示範囲を絞り込む (既定は無制限で全表示)。
+    ``symbol`` を指定すると、平面記号では各柱位置にそのシンボルを配置する。
     """
     return {
         'version': DOCUMENT_VERSION,
-        'marks': build_marks(positions, origin, size, style, top_range),
+        'marks': build_marks(positions, origin, size, style, top_range, symbol),
     }
