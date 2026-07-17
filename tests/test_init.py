@@ -16,10 +16,11 @@ PARAMS = {'TargetLayer': '1-柱', 'TargetClass': '', 'MarkSize': '200'}
 ORIGIN = (100.0, 100.0)
 
 
-def _make_vs_mock(columns: dict[str, tuple[str, float, float]]) -> MagicMock:
+def _make_vs_mock(columns: dict[str, tuple[str | float, ...]]) -> MagicMock:
     """柱検索・パラメータ読取・描画を追跡するステートフルなモック。
 
-    columns: handle -> (structural_use, x, y)。
+    columns: handle -> (structural_use, x, y[, top])。top (上端高さ) は任意で、
+    省略時は 0.0。
     """
     vs_mock = MagicMock()
     vs_mock.GetCustomObjectInfo.return_value = (True, 'ColumnUnderMark', 'PIO', 'REC', None)
@@ -28,19 +29,29 @@ def _make_vs_mock(columns: dict[str, tuple[str, float, float]]) -> MagicMock:
     def get_rfield(handle: Any, record: str, field: str) -> str:
         # 構造材の構造用途の読取
         if record == 'StructuralMember' and field == 'StructuralUse':
-            return columns[handle][0]
+            return str(columns[handle][0])
         # プラグインオブジェクトのパラメータの読取
         return PARAMS.get(field, '')
 
     def get_sym_loc(handle: Any) -> tuple[float, float]:
         if handle == 'PIO':
             return ORIGIN
-        return (columns[handle][1], columns[handle][2])
+        return (float(columns[handle][1]), float(columns[handle][2]))
 
     def get_bbox(handle: Any) -> tuple[tuple[float, float], tuple[float, float]]:
         # 構造材の実断面 (100×100) を模す。p1=左上・p2=右下。
-        x, y = columns[handle][1], columns[handle][2]
+        x, y = float(columns[handle][1]), float(columns[handle][2])
         return ((x - 50.0, y + 50.0), (x + 50.0, y - 50.0))
+
+    def get_3d_cntr(handle: Any) -> tuple[tuple[float, float], float]:
+        # 中心 Z に上端高さ (top) を入れ、Get3DInfo の height=0 と合わせて
+        # top_height() が top をそのまま返すようにする。
+        x, y = float(columns[handle][1]), float(columns[handle][2])
+        top = float(columns[handle][3]) if len(columns[handle]) > 3 else 0.0
+        return ((x, y), top)
+
+    def get_3d_info(handle: Any) -> tuple[float, float, float]:
+        return (0.0, 0.0, 0.0)
 
     def for_each_object(callback: Any, criteria: str) -> None:
         for handle in columns:
@@ -49,6 +60,8 @@ def _make_vs_mock(columns: dict[str, tuple[str, float, float]]) -> MagicMock:
     vs_mock.GetRField.side_effect = get_rfield
     vs_mock.GetSymLoc.side_effect = get_sym_loc
     vs_mock.GetBBox.side_effect = get_bbox
+    vs_mock.Get3DCntr.side_effect = get_3d_cntr
+    vs_mock.Get3DInfo.side_effect = get_3d_info
     vs_mock.ForEachObject.side_effect = for_each_object
     return vs_mock
 
@@ -120,6 +133,37 @@ class TestRun:
         # → ローカル外接矩形の / (左下→右上) 1 本。
         assert move_calls[2] == (2950.0, 3950.0)
         assert line_calls[2] == (3050.0, 4050.0)
+
+    def test_top_height_range_filters_out_of_range_columns(self) -> None:
+        # TopHeightMin/Max を指定すると上端が範囲内の柱だけに記号を描く
+        vs_mock = _make_vs_mock({
+            'a': ('4', 1100.0, 2100.0, 3000.0),   # 上端 3000 → 範囲内 → 描く
+            'b': ('4', 5100.0, 6100.0, 6000.0),   # 上端 6000 → 範囲外 → 描かない
+        })
+
+        def get_rfield(handle: Any, record: str, field: str) -> str:
+            if record == 'StructuralMember' and field == 'StructuralUse':
+                return '4'
+            if field == 'MarkSize':
+                return '200'
+            if field == 'TopHeightMin':
+                return '2900'
+            if field == 'TopHeightMax':
+                return '3100'
+            return ''
+
+        vs_mock.GetRField.side_effect = get_rfield
+        with patch.dict('sys.modules', {'vs': vs_mock}):
+            _reload_vw_modules()
+            import vectorworks_plugin_column_under_mark as pkg
+            importlib.reload(pkg)
+            pkg.run()
+
+        # 柱 a (上端 3000) のみ描く → × 1 個 → 2 線分。柱 b は範囲外で描かない。
+        assert vs_mock.MoveTo.call_count == 2
+        move_calls = [c.args for c in vs_mock.MoveTo.call_args_list]
+        # 柱 a: (1100,2100) 挿入点 (100,100) → ローカル中心 (1000,2000)
+        assert move_calls[0] == (900.0, 1900.0)
 
     def test_marks_use_local_coordinates(self) -> None:
         # 柱 (1100, 2100)・挿入点 (100, 100)・サイズ 200 → ローカル中心 (1000, 2000)

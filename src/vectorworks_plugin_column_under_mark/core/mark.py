@@ -46,12 +46,45 @@ class ColumnPosition(NamedTuple):
     - ``kind``: 記号の種類 (``KIND_COLUMN`` / ``KIND_KOYAZUKA``)。
     - ``bounds``: 実断面の外接矩形 (ワールド座標)。断面記号で使う。取得でき
       なかった場合は ``None`` (断面記号は指定サイズにフォールバック)。
+    - ``top``: 柱・小屋束の上端の高さ (Z, ワールド座標)。上端高さの範囲
+      (``TopRange``) で表示を絞り込むのに使う。取得できなかった場合は ``None``
+      (範囲を課さず常に表示)。
     """
 
     x: float
     y: float
     kind: str
     bounds: Optional[Bounds] = None
+    top: Optional[float] = None
+
+
+class TopRange(NamedTuple):
+    """柱・小屋束の上端高さの表示範囲 (下限・上限)。
+
+    伏図で対象としている横架材の下にある柱だけに記号を付けたい、という用途の
+    ため、上端が指定範囲に入る柱・小屋束にのみ記号を描く。``minimum`` /
+    ``maximum`` はそれぞれ ``None`` の側を無制限とし、両方 ``None`` (既定) なら
+    絞り込まない (すべて表示)。境界は含む (``minimum <= top <= maximum``)。
+    """
+
+    minimum: Optional[float] = None
+    maximum: Optional[float] = None
+
+    def contains(self, top: Optional[float]) -> bool:
+        """上端高さ ``top`` がこの範囲に含まれるか判定する。
+
+        ``top`` が ``None`` (高さ不明) の場合は範囲を課さず表示する
+        (``True``)。柱が黙って消えて伏図と食い違うのを防ぐため、判定不能なら
+        表示側に倒す。``minimum`` / ``maximum`` はそれぞれ ``None`` の側を
+        無制限とする。
+        """
+        if top is None:
+            return True
+        if self.minimum is not None and top < self.minimum:
+            return False
+        if self.maximum is not None and top > self.maximum:
+            return False
+        return True
 
 
 def build_cross_mark(x: float, y: float, size: float) -> MarkCommand:
@@ -173,6 +206,30 @@ def normalize_style(value: str) -> str:
     return STYLE_PLAN
 
 
+def _parse_optional_number(value: str) -> Optional[float]:
+    """パラメータ文字列を数値へ変換する。空文字・数値化不能なら ``None``。"""
+    text = (value or '').strip()
+    if not text:
+        return None
+    try:
+        return float(text)
+    except (TypeError, ValueError):
+        return None
+
+
+def normalize_top_range(minimum: str, maximum: str) -> TopRange:
+    """上端高さの下限・上限のパラメータ文字列を ``TopRange`` へ正規化する。
+
+    空文字・数値化できない値はその側を無制限 (``None``) とする。両方とも指定
+    され下限 > 上限のときは入れ替えて範囲を整合させる (入力ミスに寛容にする)。
+    """
+    lo = _parse_optional_number(minimum)
+    hi = _parse_optional_number(maximum)
+    if lo is not None and hi is not None and lo > hi:
+        lo, hi = hi, lo
+    return TopRange(lo, hi)
+
+
 def build_mark(
     kind: str, x: float, y: float, size: float,
     style: str = DEFAULT_MARK_STYLE,
@@ -204,20 +261,25 @@ def build_marks(
     origin: tuple[float, float],
     size: float,
     style: str = DEFAULT_MARK_STYLE,
+    top_range: TopRange = TopRange(),
 ) -> list[MarkCommand]:
     """柱・小屋束の位置情報のリストから記号命令のリストを組み立てる。
 
-    各要素は ``ColumnPosition`` (挿入点・種類・実断面)。``style`` は記号スタイル
-    (``STYLE_PLAN`` / ``STYLE_SECTION``)。``origin`` はプラグインオブジェクトの
-    挿入点 (ワールド座標) で、挿入点・実断面ともに ``origin`` 基準のローカル座標
-    へ平行移動してから記号を作る。現状は回転非対応 (オブジェクトを回転させない
-    前提。CLAUDE.md 参照)。
+    各要素は ``ColumnPosition`` (挿入点・種類・実断面・上端高さ)。``style`` は
+    記号スタイル (``STYLE_PLAN`` / ``STYLE_SECTION``)。``top_range`` は上端高さの
+    表示範囲で、上端が範囲外の柱・小屋束は記号を作らない (既定は無制限で全表示)。
+    ``origin`` はプラグインオブジェクトの挿入点 (ワールド座標) で、挿入点・実断面
+    ともに ``origin`` 基準のローカル座標へ平行移動してから記号を作る。現状は
+    回転非対応 (オブジェクトを回転させない前提。CLAUDE.md 参照)。
     """
     if size <= 0:
         size = DEFAULT_MARK_SIZE
     ox, oy = origin
     marks: list[MarkCommand] = []
     for pos in positions:
+        # 上端高さが指定範囲外の柱・小屋束は記号を描かない
+        if not top_range.contains(pos.top):
+            continue
         local_bounds: Optional[Bounds] = None
         if pos.bounds is not None:
             bx1, by1, bx2, by2 = pos.bounds
@@ -235,9 +297,13 @@ def build_document(
     origin: tuple[float, float],
     size: float,
     style: str = DEFAULT_MARK_STYLE,
+    top_range: TopRange = TopRange(),
 ) -> Document:
-    """柱・小屋束の位置情報から命令セット (Document) を組み立てる。"""
+    """柱・小屋束の位置情報から命令セット (Document) を組み立てる。
+
+    ``top_range`` で上端高さの表示範囲を絞り込む (既定は無制限で全表示)。
+    """
     return {
         'version': DOCUMENT_VERSION,
-        'marks': build_marks(positions, origin, size, style),
+        'marks': build_marks(positions, origin, size, style, top_range),
     }

@@ -10,6 +10,7 @@ from vectorworks_plugin_column_under_mark.core.mark import (
     STYLE_PLAN,
     STYLE_SECTION,
     ColumnPosition,
+    TopRange,
     build_circle_mark,
     build_cross_in_bounds,
     build_cross_mark,
@@ -19,6 +20,7 @@ from vectorworks_plugin_column_under_mark.core.mark import (
     build_mark,
     build_marks,
     normalize_style,
+    normalize_top_range,
 )
 from vectorworks_plugin_column_under_mark.document import DOCUMENT_VERSION
 
@@ -107,6 +109,61 @@ class TestNormalizeStyle:
 
     def test_surrounding_whitespace_ignored(self) -> None:
         assert normalize_style('  断面  ') == STYLE_SECTION
+
+
+class TestNormalizeTopRange:
+    def test_empty_both_unbounded(self) -> None:
+        assert normalize_top_range('', '') == TopRange(None, None)
+
+    def test_parses_numbers(self) -> None:
+        assert normalize_top_range('1000', '3000') == TopRange(1000.0, 3000.0)
+
+    def test_only_min(self) -> None:
+        assert normalize_top_range('1000', '') == TopRange(1000.0, None)
+
+    def test_only_max(self) -> None:
+        assert normalize_top_range('', '3000') == TopRange(None, 3000.0)
+
+    def test_non_numeric_becomes_unbounded(self) -> None:
+        assert normalize_top_range('abc', 'x') == TopRange(None, None)
+
+    def test_whitespace_is_unbounded(self) -> None:
+        assert normalize_top_range('  ', '3000') == TopRange(None, 3000.0)
+
+    def test_swaps_when_min_greater_than_max(self) -> None:
+        # 下限 > 上限は入れ替えて整合させる (入力ミスに寛容)
+        assert normalize_top_range('3000', '1000') == TopRange(1000.0, 3000.0)
+
+
+class TestTopRangeContains:
+    def test_unbounded_contains_any(self) -> None:
+        assert TopRange().contains(1234.0) is True
+
+    def test_none_top_always_contained(self) -> None:
+        # 高さ不明は範囲を課さず表示する
+        assert TopRange(1000.0, 2000.0).contains(None) is True
+
+    def test_within_inclusive_bounds(self) -> None:
+        r = TopRange(1000.0, 2000.0)
+        assert r.contains(1000.0) is True   # 下限は含む
+        assert r.contains(2000.0) is True   # 上限は含む
+        assert r.contains(1500.0) is True
+
+    def test_below_min_excluded(self) -> None:
+        assert TopRange(1000.0, 2000.0).contains(999.0) is False
+
+    def test_above_max_excluded(self) -> None:
+        assert TopRange(1000.0, 2000.0).contains(2001.0) is False
+
+    def test_only_min_bound(self) -> None:
+        r = TopRange(1000.0, None)
+        assert r.contains(5000.0) is True
+        assert r.contains(999.0) is False
+
+    def test_only_max_bound(self) -> None:
+        r = TopRange(None, 2000.0)
+        assert r.contains(-5.0) is True
+        assert r.contains(2001.0) is False
 
 
 class TestBuildMark:
@@ -265,12 +322,56 @@ class TestBuildMarks:
         assert marks[0]['segments'] == [[[100.0, 200.0], [300.0, 400.0]]]
 
 
+class TestBuildMarksTopRange:
+    # 上端 3000 (範囲内) と 6000 (範囲外) の柱 2 本
+    positions = [
+        ColumnPosition(0.0, 0.0, KIND_COLUMN, None, 3000.0),
+        ColumnPosition(100.0, 0.0, KIND_COLUMN, None, 6000.0),
+    ]
+
+    def test_default_range_keeps_all(self) -> None:
+        assert len(build_marks(self.positions, (0.0, 0.0), 200.0)) == 2
+
+    def test_filters_out_of_range(self) -> None:
+        marks = build_marks(
+            self.positions, (0.0, 0.0), 200.0, DEFAULT_MARK_STYLE,
+            TopRange(2900.0, 3100.0),
+        )
+        assert len(marks) == 1
+
+    def test_only_max_bound_filters(self) -> None:
+        marks = build_marks(
+            self.positions, (0.0, 0.0), 200.0, DEFAULT_MARK_STYLE,
+            TopRange(None, 4000.0),
+        )
+        assert len(marks) == 1
+
+    def test_none_top_is_kept(self) -> None:
+        # 上端高さ不明の柱は範囲指定があっても描く
+        marks = build_marks(
+            [ColumnPosition(0.0, 0.0, KIND_COLUMN, None, None)],
+            (0.0, 0.0), 200.0, DEFAULT_MARK_STYLE, TopRange(2900.0, 3100.0),
+        )
+        assert len(marks) == 1
+
+
 class TestBuildDocument:
     def test_has_version_and_marks(self) -> None:
         document = build_document(
             [ColumnPosition(0.0, 0.0, KIND_COLUMN)], (0.0, 0.0), 200.0
         )
         assert document['version'] == DOCUMENT_VERSION
+        assert len(document['marks']) == 1
+
+    def test_top_range_filters_marks(self) -> None:
+        positions = [
+            ColumnPosition(0.0, 0.0, KIND_COLUMN, None, 3000.0),
+            ColumnPosition(100.0, 0.0, KIND_COLUMN, None, 6000.0),
+        ]
+        document = build_document(
+            positions, (0.0, 0.0), 200.0, DEFAULT_MARK_STYLE,
+            TopRange(None, 4000.0),
+        )
         assert len(document['marks']) == 1
 
     def test_module_reexports_default_size(self) -> None:
