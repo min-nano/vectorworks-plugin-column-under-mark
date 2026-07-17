@@ -25,6 +25,11 @@ VectorWorks に取り込むプラグイン) が配置した柱を対象に想定
 - 記号寸法の決め方はスタイル依存。平面記号 (伏図記号) は挿入点中心・指定サイズ
   (`MarkSize`)、断面記号は柱・小屋束の**実断面** (`vs.GetBBox` の外接矩形) に
   合わせて対角線を引く。
+- 柱・小屋束の**上端の高さ範囲**による絞り込み (`TopHeightMin` /
+  `TopHeightMax` パラメータ)。上端の Z 高さが指定範囲内にある柱・小屋束にのみ
+  記号を描く。柱が母屋まで伸びる・2 段梁を受ける等で、伏図で対象としている
+  横架材の下にある柱だけに記号を付けたい場合に使う。空欄の側は無制限、両方
+  空欄なら絞り込まない (すべて表示)。
 
 今後の予定:
 
@@ -76,11 +81,11 @@ src/
         __init__.py       # run() を公開 (パラメータ読取 → 検索 → 命令セット → 描画)
         document.py       # 命令セットのスキーマ定義・検証 (vs 非依存)
         core/             # フェーズ1: 記号ジオメトリ組み立て (vs 非依存)
-            __init__.py   # build_document / build_marks / build_mark / ColumnPosition / 記号種類・スタイル定数を公開
-            mark.py       # 柱・小屋束の位置情報 (ColumnPosition) と種類・スタイル → mark 命令 (平面は指定サイズ、断面は実断面 bounds に合わせる)
+            __init__.py   # build_document / build_marks / build_mark / ColumnPosition / TopRange / normalize_top_range / 記号種類・スタイル定数を公開
+            mark.py       # 柱・小屋束の位置情報 (ColumnPosition, 上端高さ top を含む) と種類・スタイル → mark 命令 (平面は指定サイズ、断面は実断面 bounds に合わせる)。上端高さの表示範囲 TopRange とその絞り込み・正規化 (normalize_top_range) も持つ
         vw/               # フェーズ2: 検索・描画 (vs 依存)
             __init__.py   # execute_document(document) / find_column_positions を公開
-            search.py     # 指定レイヤ・クラスの柱 (構造用途 4/5) を検索 → 位置
+            search.py     # 指定レイヤ・クラスの柱 (構造用途 4/5) を検索 → 位置・実断面・上端高さ (top_height)
             draw.py       # mark 命令 → 線分 (MoveTo/LineTo) を描画
 main.py                  # VectorWorks に登録するラッパースクリプト (実行時に自動更新)
 tests/                   # pytest 用テスト (CI は vs.py スタブを GitHub からダウンロード)
@@ -146,8 +151,9 @@ pyproject.toml           # パッケージメタデータ
   用途 (`GetRField(h, 'StructuralMember', 'StructuralUse')`) を記号の種類に変換
   する (`column_kind`): 柱="4" → `KIND_COLUMN`、小屋束="5" → `KIND_KOYAZUKA`、
   どちらでもなければ `None` (対象外)。`find_column_positions` は対象だけを
-  `ColumnPosition(x, y, kind, bounds)` の形で返し、`core` が種類と記号スタイル
-  ごとに記号形状 (柱→×・小屋束→平面記号なら ○/断面記号なら /) を選ぶ。
+  `ColumnPosition(x, y, kind, bounds, top)` の形で返し、`core` が種類と記号
+  スタイルごとに記号形状 (柱→×・小屋束→平面記号なら ○/断面記号なら /) を選び、
+  上端高さ `top` で表示範囲を絞り込む。
   `ColumnPosition` と記号種類の定数 (`KIND_COLUMN` / `KIND_KOYAZUKA`) は vs
   非依存の `core` 側で定義し、`search` が import する (種類→形状の対応付けは
   presentation であり `core` が持つ)。
@@ -158,6 +164,14 @@ pyproject.toml           # パッケージメタデータ
   断面記号は挿入点中心の指定サイズではなく、この外接矩形の対角線で ×・/ を引く
   (`build_cross_in_bounds` / `build_diagonal_in_bounds`)。`GetBBox` が実断面と
   一致するか (回転した断面など) は VW 上で最終確認する方針。
+- 上端の高さ (`top`) は `top_height` が `vs.Get3DCntr` (3D バウンディング
+  ボックス中心の Z) と `vs.Get3DInfo` (Z 方向の寸法 height) から
+  `中心 Z + height/2` で得る。垂直な柱・小屋束では 3D バウンディングボックスの
+  上面が上端に一致する。上端高さは表示範囲 (`core` の `TopRange`) の絞り込みに
+  使う。`Get3DInfo` の `height` が Z 方向の寸法か・座標系がレイヤ/ワールドの
+  どちらかは VW 上で最終確認する方針。範囲判定 (`TopRange.contains`) は vs 非依存
+  の `core` 側に置き、上端が取れない (`top` が `None`) 場合は範囲を課さず表示
+  する (柱が黙って消えて伏図と食い違うのを防ぐ)。
 - 構造用途の値 (柱="4"・小屋束="5") は姉妹プロジェクトの `vw/column.py` が
   `StructuralUse` フィールドに設定する値と一致させている。VectorWorks の構造材
   ツール・条件式の実挙動は VW 上で最終確認する方針。
@@ -169,7 +183,8 @@ pyproject.toml           # パッケージメタデータ
 イン名) を得て、`vs.GetRField` で各パラメータを読む。パラメータのフィールド名は
 `__init__.py` の定数 (`PARAM_TARGET_LAYER`='TargetLayer' /
 `PARAM_TARGET_CLASS`='TargetClass' / `PARAM_MARK_SIZE`='MarkSize' /
-`PARAM_MARK_STYLE`='MarkStyle') に集約している。VectorWorks 側のプラグイン
+`PARAM_MARK_STYLE`='MarkStyle' / `PARAM_TOP_MIN`='TopHeightMin' /
+`PARAM_TOP_MAX`='TopHeightMax') に集約している。VectorWorks 側のプラグイン
 定義でこれらのパラメータを用意する必要がある (README 参照)。`MarkSize` が
 数値に解釈できない場合は既定サイズ (`core/mark.py` の `DEFAULT_MARK_SIZE`
 =300mm) にフォールバックする。`MarkSize` は平面記号で使う (断面記号は実断面に
@@ -178,7 +193,11 @@ pyproject.toml           # パッケージメタデータ
 断面記号 (`STYLE_SECTION`)、それ以外・空欄なら平面記号 (`STYLE_PLAN`、既定) を
 使う。スタイル → 種類 → 形状ビルダーの対応付けは presentation として
 `core/mark.py` が持つ (平面=`_PLAN_BUILDERS`、断面=`_SECTION_BOUNDS_BUILDERS`、
-断面のフォールバック=`_SECTION_SIZE_BUILDERS`)。
+断面のフォールバック=`_SECTION_SIZE_BUILDERS`)。`TopHeightMin` / `TopHeightMax`
+は `core.normalize_top_range` で `TopRange` に正規化する。空欄・数値化できない
+値はその側を無制限 (`None`) とし、両方指定で下限 > 上限なら入れ替える。この
+`TopRange` を `build_document` に渡すと、上端高さが範囲外の柱・小屋束は記号を
+作らない (組み立てフェーズ `build_marks` で `TopRange.contains` により除外)。
 
 ## コーディング規約: 型注釈
 

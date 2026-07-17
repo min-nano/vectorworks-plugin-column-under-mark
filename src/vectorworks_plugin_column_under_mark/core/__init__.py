@@ -14,6 +14,7 @@ from .mark import (
     STYLE_SECTION,
     Bounds,
     ColumnPosition,
+    TopRange,
     build_circle_mark,
     build_cross_in_bounds,
     build_cross_mark,
@@ -23,6 +24,7 @@ from .mark import (
     build_mark,
     build_marks,
     normalize_style,
+    normalize_top_range,
 )
 
 __all__ = [
@@ -34,6 +36,7 @@ __all__ = [
     'STYLE_SECTION',
     'Bounds',
     'ColumnPosition',
+    'TopRange',
     'build_circle_mark',
     'build_cross_in_bounds',
     'build_cross_mark',
@@ -43,4 +46,5 @@ __all__ = [
     'build_mark',
     'build_marks',
     'normalize_style',
+    'normalize_top_range',
 ]

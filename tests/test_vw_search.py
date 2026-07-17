@@ -6,12 +6,13 @@ from typing import Any, Callable
 from unittest.mock import MagicMock, patch
 
 
-def _make_vs_mock(objects: dict[str, tuple[str, float, float]]) -> MagicMock:
+def _make_vs_mock(objects: dict[str, tuple[str | float, ...]]) -> MagicMock:
     """構造材オブジェクトのモック。
 
-    objects: handle -> (structural_use, x, y)。ForEachObject は条件に
-    かかわらず全 handle をコールバックに渡し (条件式の絞り込みは VW 側の
-    責務)、構造用途による選別はコールバック内の is_target_column が行う。
+    objects: handle -> (structural_use, x, y[, top])。top (上端高さ) は任意で、
+    省略時は 0.0。ForEachObject は条件にかかわらず全 handle をコールバックに
+    渡し (条件式の絞り込みは VW 側の責務)、構造用途による選別はコールバック内の
+    is_target_column が行う。
     """
     vs_mock = MagicMock()
 
@@ -20,21 +21,33 @@ def _make_vs_mock(objects: dict[str, tuple[str, float, float]]) -> MagicMock:
             callback(handle)
 
     def get_rfield(handle: str, record: str, field: str) -> str:
-        return objects[handle][0]
+        return str(objects[handle][0])
 
     def get_sym_loc(handle: str) -> tuple[float, float]:
-        return (objects[handle][1], objects[handle][2])
+        return (float(objects[handle][1]), float(objects[handle][2]))
 
     def get_bbox(handle: str) -> tuple[tuple[float, float], tuple[float, float]]:
         # 挿入点まわりの 100×100 の実断面を模す。VW 慣習に合わせ
         # p1=左上 (minx, maxy)・p2=右下 (maxx, miny) を返す。
-        x, y = objects[handle][1], objects[handle][2]
+        x, y = float(objects[handle][1]), float(objects[handle][2])
         return ((x - 50.0, y + 50.0), (x + 50.0, y - 50.0))
+
+    def get_3d_cntr(handle: str) -> tuple[tuple[float, float], float]:
+        # 中心 Z に上端高さ (top) を入れ、Get3DInfo の height=0 と合わせて
+        # top_height() が top をそのまま返すようにする。
+        x, y = float(objects[handle][1]), float(objects[handle][2])
+        top = float(objects[handle][3]) if len(objects[handle]) > 3 else 0.0
+        return ((x, y), top)
+
+    def get_3d_info(handle: str) -> tuple[float, float, float]:
+        return (0.0, 0.0, 0.0)
 
     vs_mock.ForEachObject.side_effect = for_each_object
     vs_mock.GetRField.side_effect = get_rfield
     vs_mock.GetSymLoc.side_effect = get_sym_loc
     vs_mock.GetBBox.side_effect = get_bbox
+    vs_mock.Get3DCntr.side_effect = get_3d_cntr
+    vs_mock.Get3DInfo.side_effect = get_3d_info
     return vs_mock
 
 
@@ -46,44 +59,54 @@ def _load_search(vs_mock: MagicMock) -> Any:
 
 
 class TestFindColumnPositions:
-    def test_returns_positions_kinds_and_bounds(self) -> None:
+    def test_returns_positions_kinds_bounds_and_top(self) -> None:
         vs_mock = _make_vs_mock({
-            'a': ('4', 1000.0, 2000.0),   # 柱 → ×
-            'b': ('5', 3000.0, 4000.0),   # 小屋束 → ○
+            'a': ('4', 1000.0, 2000.0, 3000.0),   # 柱 → ×・上端 3000
+            'b': ('5', 3000.0, 4000.0, 5500.0),   # 小屋束 → ○・上端 5500
         })
         search = _load_search(vs_mock)
         positions = search.find_column_positions('1-柱', '')
-        # 各要素は ColumnPosition(x, y, kind, bounds)。bounds は GetBBox の
-        # 2 隅を (x1, y1, x2, y2) に平坦化したもの。
+        # 各要素は ColumnPosition(x, y, kind, bounds, top)。bounds は GetBBox の
+        # 2 隅を (x1, y1, x2, y2) に平坦化したもの、top は上端高さ。
         assert positions == [
             search.ColumnPosition(
                 1000.0, 2000.0, search.KIND_COLUMN,
-                (950.0, 2050.0, 1050.0, 1950.0),
+                (950.0, 2050.0, 1050.0, 1950.0), 3000.0,
             ),
             search.ColumnPosition(
                 3000.0, 4000.0, search.KIND_KOYAZUKA,
-                (2950.0, 4050.0, 3050.0, 3950.0),
+                (2950.0, 4050.0, 3050.0, 3950.0), 5500.0,
             ),
         ]
 
     def test_excludes_non_column_structural_use(self) -> None:
         vs_mock = _make_vs_mock({
-            'a': ('4', 1000.0, 2000.0),   # 柱 → 採用
-            'b': ('1', 5000.0, 6000.0),   # 梁 → 除外
-            'c': ('', 7000.0, 8000.0),    # 用途不明 → 除外
+            'a': ('4', 1000.0, 2000.0, 3000.0),   # 柱 → 採用
+            'b': ('1', 5000.0, 6000.0),           # 梁 → 除外
+            'c': ('', 7000.0, 8000.0),            # 用途不明 → 除外
         })
         search = _load_search(vs_mock)
         positions = search.find_column_positions('1-柱', '')
         assert positions == [
             search.ColumnPosition(
                 1000.0, 2000.0, search.KIND_COLUMN,
-                (950.0, 2050.0, 1050.0, 1950.0),
+                (950.0, 2050.0, 1050.0, 1950.0), 3000.0,
             ),
         ]
 
     def test_empty_document_yields_no_positions(self) -> None:
         search = _load_search(_make_vs_mock({}))
         assert search.find_column_positions('1-柱', '') == []
+
+
+class TestTopHeight:
+    def test_top_is_center_z_plus_half_height(self) -> None:
+        # 中心 Z=1000・Z 方向寸法 height=400 → 上端 = 1000 + 200 = 1200
+        vs_mock = MagicMock()
+        vs_mock.Get3DCntr.return_value = ((0.0, 0.0), 1000.0)
+        vs_mock.Get3DInfo.return_value = (400.0, 100.0, 100.0)
+        search = _load_search(vs_mock)
+        assert search.top_height('a') == 1200.0
 
 
 class TestBuildCriteria:

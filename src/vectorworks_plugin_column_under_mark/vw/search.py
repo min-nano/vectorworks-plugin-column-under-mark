@@ -71,6 +71,20 @@ def section_bounds(handle: object) -> Bounds:
     return (x1, y1, x2, y2)
 
 
+def top_height(handle: object) -> float:
+    """構造材の上端の高さ (Z, ワールド座標) を返す。
+
+    ``vs.Get3DCntr`` で 3D バウンディングボックス中心の Z を、``vs.Get3DInfo``
+    で Z 方向の寸法 (height) を得て、中心 + height/2 を上端とする。垂直な柱・
+    小屋束では 3D バウンディングボックスの上面が柱の上端に一致する。上端高さは
+    表示範囲 (``TopRange``) の判定に用いる。``Get3DInfo`` の ``height`` が Z 方向
+    の寸法か・座標系がレイヤ/ワールドのどちらかは VW 上で最終確認する方針。
+    """
+    _center, center_z = vs.Get3DCntr(handle)
+    height, _width, _depth = vs.Get3DInfo(handle)
+    return center_z + height / 2.0
+
+
 def find_column_positions(
     layer: str, class_name: str
 ) -> list[ColumnPosition]:
@@ -78,8 +92,9 @@ def find_column_positions(
 
     条件式で構造材を絞り込み、構造用途が柱/小屋束のものだけを採る。各要素は
     ``ColumnPosition`` で、挿入点 (``GetSymLoc``)・記号の種類 (柱→``KIND_COLUMN``
-    / 小屋束→``KIND_KOYAZUKA``)・実断面の外接矩形 (``GetBBox``) を持つ。実断面は
-    断面記号で寸法・位置を実断面に合わせるために使う。
+    / 小屋束→``KIND_KOYAZUKA``)・実断面の外接矩形 (``GetBBox``)・上端高さ
+    (``Get3DCntr``/``Get3DInfo``) を持つ。実断面は断面記号で寸法・位置を実断面に
+    合わせるために、上端高さは表示範囲の絞り込みに使う。
     """
     positions: list[ColumnPosition] = []
 
@@ -88,7 +103,9 @@ def find_column_positions(
         if kind is not None:
             x, y = vs.GetSymLoc(handle)
             positions.append(
-                ColumnPosition(x, y, kind, section_bounds(handle))
+                ColumnPosition(
+                    x, y, kind, section_bounds(handle), top_height(handle)
+                )
             )
 
     vs.ForEachObject(collect, build_criteria(layer, class_name))
